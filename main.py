@@ -12,39 +12,35 @@ def main():
     # Initial prompt for the book
     initial_prompt = """
     Create a story in my established writing style with these key elements:
-    Its important that it has several key storylines that intersect and influence each other. The story should be set in a modern corporate environment, with a focus on technology and finance. The protagonist is a software engineer named Dane who has just completed a groundbreaking stock prediction algorithm. The algorithm predicts a catastrophic market crash, but Dane oversleeps and must rush to an important presentation to share his findings with executives. The tension arises from the questioning of whether his "error" might actually be correct.
+    Its important that it has several key storylines that intersect and influence each other. The story should be set in a world within the Minecraft game. The protagonist is a small boy named Matthew who has just fallen asleep in front of his computer while playing his favourite computer game Minecraft . When Matthew wakes up he is in the game, stuck he need to solves puzzles and travel through the Minecraft world to find a portal to get home.
 
-    The piece is written in third-person limited perspective, following Dane's thoughts and experiences. The prose is direct and technical when describing the protagonist's work, but becomes more introspective during personal moments. The author employs a mix of dialogue and internal monologue, with particular attention to time progression and technical details around the algorithm and stock predictions.
+    The piece is written in third-person limited perspective, following Matthews's thoughts and experiences. The prose is direct and technical when describing the protagonist's work, but becomes more introspective during personal moments. The author employs a mix of dialogue and internal monologue, with particular attention to time progression and Matthew's idea on how he might get home.
     Story Arch:
 
-    Setup: Dane completes a groundbreaking stock prediction algorithm late at night
-    Initial Conflict: The algorithm predicts a catastrophic market crash
-    Rising Action: Dane oversleeps and must rush to an important presentation
-    Climax: The presentation to executives where he must explain his findings
-    Tension Point: The questioning of whether his "error" might actually be correct
+    Setup: Matthew falls a sleep late at night while playing Minecraft
+    Initial Conflict: Matthew awakens in the game and realizes he is stuck
+    Rising Action: Matthew must solve puzzles and navigate the Minecraft world
+    Climax: Matthew finds the portal to return home
+    Tension Point: Matthew must decide whether to stay in the game or return to reality
 
     Characters:
 
-    Dane: The protagonist; a dedicated software engineer who prioritizes work over personal life. Wears grey polo shirts on Thursdays, tends to get lost in his work, and struggles with work-life balance. More comfortable with code than public speaking.
-    Gary: Dane's nervous boss who seems caught between supporting Dane and managing upper management's expectations
-    Jonathan Morego: Senior VP of Investor Relations who raises pointed questions about the validity of Dane's predictions
-    Silence: Brief mention as an Uber driver
-    C-Level Executives: Present as an audience during the presentation
+    Matthew: The protagonist; a small boy who love to play computer games online with his friends.
+    Maks: Matthew's best friend who is also a gamer and helps him navigate the Minecraft world.
+    Pillager: Pillagers are hostile mobs armed with crossbows found in wandering patrols, in pillager outposts, or as participants in raids. They attack by firing arrows at the player.
+    Mob: A mob is an AI-driven game entity resembling a living creature. Beside its common meaning, the term "mob" is short for "mobile entity".[1] All mobs can be attacked and hurt (from falling, attacked by a player or another mob, falling into the void, hit by an arrow, etc), and have some form of voluntary movement. Different types of mobs often have unique AI and drop good or bad loot depending on the mob that was killed.
+    Animal: The term Animal refers to a category of mobs that are mainly based on real life animals. Mobs mentioned on this page are classified as Animal or WaterAnimal in the game code. Many other mobs and even some blocks are also based on real life animals, but are not treated as such in Minecraft. Most of these mobs are also called animals in many advancements. The blocks are not listed on this page. Animals are usually either passive (fleeing) or neutral (fighting), with the only exception being the hostile hoglin.
 
     World Description:
-    The story takes place in a contemporary corporate setting, likely a financial technology company. The world appears to be our modern one, with familiar elements like:
+    The story takes place in the Minecraft game. The world is a blocky, procedurally-generated 3D world where players can explore, build, and interact with the environment. The world is populated by various creatures, including animals, mobs, and villagers. The landscape features a variety of biomes, such as forests, deserts, mountains, and oceans. Players can mine resources, craft items, and build structures using blocks. The world is infinite in size, with no set goals or objectives, allowing players to create their own adventures.
 
-    Major tech companies (Tesla, Google, Apple, Microsoft)
-    Stock market and financial systems
-    Modern technology (neural networks, predictive analytics)
-    Urban environment with rideshare services like Uber
-    Corporate hierarchy and office culture
-
-    The story creates tension between the familiar corporate world and the potential for an unprecedented financial catastrophe, blending elements of technical thriller with workplace drama. The setting feels grounded in reality but hints at potentially apocalyptic economic consequences.
+    The story creates tension the human characters and the creatures in the Minecraft world. The protagonist must navigate the world and interact with its inhabitants to find a way home. The story explores themes of friendship, survival, and the blurring of reality and fantasy. The protagonist's journey is both physical and emotional, as he confronts challenges and makes difficult decisions. The story is a mix of adventure, mystery, and drama, with elements of humor and suspense. The world of Minecraft is a rich and vibrant setting that adds depth and complexity to the narrative.
     """
-
-    num_chapters = 25
-    # Create agents
+    num_chapters = 10
+    
+    print("Generate Book")
+    
+        # Create agents
     outline_agents = BookAgents(agent_config)
     agents = outline_agents.create_agents(initial_prompt, num_chapters)
     
@@ -54,33 +50,33 @@ def main():
     outline = outline_gen.generate_outline(initial_prompt, num_chapters)
     
     # Create new agents with outline context
-    book_agents = BookAgents(agent_config, outline)
+    book_agents = BookAgents(agent_config, outline=outline)
     agents_with_context = book_agents.create_agents(initial_prompt, num_chapters)
     
     # Initialize book generator with contextual agents
     book_gen = BookGenerator(agents_with_context, agent_config, outline)
-    
+        
     # Print the generated outline
     print("\nGenerated Outline:")
     for chapter in outline:
         print(f"\nChapter {chapter['chapter_number']}: {chapter['title']}")
         print("-" * 50)
         print(chapter['prompt'])
-    
-    # Save the outline for reference
-    print("\nSaving outline to file...")
-    with open("book_output/outline.txt", "w") as f:
-        for chapter in outline:
-            f.write(f"\nChapter {chapter['chapter_number']}: {chapter['title']}\n")
-            f.write("-" * 50 + "\n")
-            f.write(chapter['prompt'] + "\n")
-    
-    # Generate the book using the outline
-    print("\nGenerating book chapters...")
-    if outline:
-        book_gen.generate_book(outline)
-    else:
-        print("Error: No outline was generated.")
+        
+        # Save the outline for reference
+        print("\nSaving outline to file...")
+        with open("book_output/outline.txt", "w") as f:
+            for chapter in outline:
+                f.write(f"\nChapter {chapter['chapter_number']}: {chapter['title']}\n")
+                f.write("-" * 50 + "\n")
+                f.write(chapter['prompt'] + "\n")
+        
+        # Generate the book using the outline
+        print("\nGenerating book chapters...")
+        if outline:
+            book_gen.generate_book(outline)
+        else:
+            print("Error: No outline was generated.")
 
 if __name__ == "__main__":
     main()

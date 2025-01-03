@@ -1,4 +1,4 @@
-# AutoGen Book Generator
+# AI Book Writer
 
 A Python-based system that uses AutoGen to generate complete books through collaborative AI agents. The system employs multiple specialized agents working together to create coherent, structured narratives from initial prompts.
 
@@ -26,8 +26,8 @@ The system uses several specialized agents:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/autogen-book-generator.git
-cd autogen-book-generator
+git clone https://https://github.com/psylsph/ai-book-writer.git
+cd ai-book-writer
 ```
 
 2. Create a virtual environment:

@@ -2,12 +2,12 @@
 import os
 from typing import Dict, List
 
-def get_config(local_url: str = "http://localhost:1234/v1") -> Dict:
+def get_config(local_url: str = "http://localhost:11434/v1") -> Dict:
     """Get the configuration for the agents"""
     
     # Basic config for local LLM
     config_list = [{
-        'model': 'Mistral-Nemo-Instruct-2407',
+        'model': 'llama3.1',
         'base_url': local_url,
         'api_key': "not-needed"
     }]
