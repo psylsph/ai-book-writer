@@ -1,22 +1,29 @@
 """Configuration for the book generation system"""
-import os
-from typing import Dict, List
+from typing import Dict
 
-def get_config(local_url: str = "http://localhost:11434/v1") -> Dict:
+
+def get_config() -> Dict:
     """Get the configuration for the agents"""
     
-    # Basic config for local LLM
-    config_list = [{
-        'model': 'llama3.1',
-        'base_url': local_url,
-        'api_key': "not-needed"
-    }]
+    config_list = [
+    {
+        "model": "mistral-16384",
+        "api_type": "ollama",
+        "num_predict": -1,
+        "repeat_penalty": 1.1,
+        "seed": 42,
+        "stream": False,
+        "temperature": 0.7,
+        "top_k": 50,
+        "top_p": 0.8
+    }
+]
 
     # Common configuration for all agents
     agent_config = {
-        "seed": 42,
-        "temperature": 0.7,
         "config_list": config_list,
+        "api_type": "ollama",
+        "model": "mistral-16384",
         "timeout": 600,
         "cache_seed": None
     }
