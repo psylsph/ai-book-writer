@@ -18,6 +18,8 @@ def get_config(local_url: str = "https://api.deepseek.com/v1") -> Dict:
         "seed": 42,
         "temperature": 0.9,
         "config_list": config_list,
+        "api_type": "ollama",
+        "model": "mistral-16384",
         "timeout": 600,
         "cache_seed": 41
     }

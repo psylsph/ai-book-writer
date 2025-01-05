@@ -1,3 +1,5 @@
+
+
 """Main script for running the book generation system"""
 from dotenv import load_dotenv
 from config import get_config
