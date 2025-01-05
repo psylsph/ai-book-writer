@@ -1,24 +1,25 @@
 """Configuration for the book generation system"""
+from typing import Dict
 import os
-from typing import Dict, List
 
-def get_config(local_url: str = "http://localhost:11434/v1") -> Dict:
+def get_config(local_url: str = "https://api.deepseek.com/v1") -> Dict:
     """Get the configuration for the agents"""
     
     # Basic config for local LLM
     config_list = [{
-        'model': 'llama3.1',
+        'model': 'deepseek-chat',
         'base_url': local_url,
-        'api_key': "not-needed"
+        'api_key': os.getenv("API_KEY"),
+        "price" : [0.014, 0.28]
     }]
 
     # Common configuration for all agents
     agent_config = {
         "seed": 42,
-        "temperature": 0.7,
+        "temperature": 0.9,
         "config_list": config_list,
         "timeout": 600,
-        "cache_seed": None
+        "cache_seed": 41
     }
     
     return agent_config

@@ -41,51 +41,22 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+4. Set you're API Key
+* Create `.env` file with the following content
+```
+API_KEY="You DeepSeek API Key"
+```
+
 ## Usage
 
 1. Basic usage:
-```python
-from main import main
-
-if __name__ == "__main__":
-    main()
-```
-
-2. Custom initial prompt:
-```python
-from config import get_config
-from agents import BookAgents
-from book_generator import BookGenerator
-from outline_generator import OutlineGenerator
-
-# Get configuration
-agent_config = get_config()
-
-# Create agents
-outline_agents = BookAgents(agent_config)
-agents = outline_agents.create_agents()
-
-# Generate outline
-outline_gen = OutlineGenerator(agents, agent_config)
-outline = outline_gen.generate_outline(your_prompt, num_chapters=25)
-
-# Initialize book generator
-book_agents = BookAgents(agent_config, outline)
-agents_with_context = book_agents.create_agents()
-book_gen = BookGenerator(agents_with_context, agent_config, outline)
-
-# Generate book
-book_gen.generate_book(outline)
-```
+```python main.py```
 
 ## Configuration
 
 The system can be configured through `config.py`. Key configurations include:
 
 - LLM endpoint URL
-- Number of chapters
-- Agent parameters
-- Output directory settings
 
 ## Output Structure
 

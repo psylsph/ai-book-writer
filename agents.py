@@ -166,7 +166,7 @@ class BookAgents:
             3. Incorporate world-building details
             4. Create engaging prose
             5. Please make sure that you write the complete scene, do not leave it incomplete
-            6. Each chapter MUST be at least 5000 words (approximately 30,000 characters). Consider this a hard requirement. If your output is shorter, continue writing until you reach this minimum length
+            6. Each chapter should target be at least 5000 words (approximately 30,000 characters). Consider this a hard requirement. If your output is shorter, continue writing until you reach this minimum length of 3000 words.
             7. Ensure transitions are smooth and logical
             8. Do not cut off the scene, make sure it has a proper ending
             9. Add a lot of details, and describe the environment and characters where it makes sense
@@ -191,7 +191,7 @@ class BookAgents:
             4. Improve prose quality
             5. Return complete edited chapter
             6. Never ask to start the next chapter, as the next step is finalizing this chapter
-            7. Each chapter MUST be at least 5000 words. If the content is shorter, return it to the writer for expansion. This is a hard requirement - do not approve chapters shorter than 5000 words
+            7. Each chapter should target to be at least 5000 words. If the content is shorter, return it to the writer for expansion. This is a hard requirement - do not approve chapters shorter than 3000 words. 
             
             Format your responses:
             1. Start critiques with 'FEEDBACK:'
