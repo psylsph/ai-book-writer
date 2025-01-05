@@ -8,7 +8,7 @@ class OutlineGenerator:
         self.agents = agents
         self.agent_config = agent_config
 
-    def generate_outline(self, initial_prompt: str, num_chapters: int = 25) -> List[Dict]:
+    def generate_outline(self, initial_prompt: str, num_chapters: int = 10) -> List[Dict]:
         """Generate a book outline based on initial prompt"""
         print("\nGenerating outline...")
 
@@ -21,8 +21,9 @@ class OutlineGenerator:
                 self.agents["outline_creator"]
             ],
             messages=[],
-            max_round=4,
+            #max_round=num_chapters*2, # at least to it 2 goes per chapter
             speaker_selection_method="round_robin"
+            #speaker_selection_method="auto"
         )
         
         manager = autogen.GroupChatManager(groupchat=groupchat, llm_config=self.agent_config)
@@ -61,7 +62,9 @@ End the outline with 'END OF OUTLINE'"""
         except Exception as e:
             print(f"Error generating outline: {str(e)}")
             # Try to salvage any outline content we can find
-            return self._emergency_outline_processing(groupchat.messages, num_chapters)
+            # return self._emergency_outline_processing(groupchat.messages, num_chapters)
+            # just fails for now
+            exit(1)
 
     def _get_sender(self, msg: Dict) -> str:
         """Helper to get sender from message regardless of format"""

@@ -1,6 +1,8 @@
 """Define the agents used in the book generation system with improved context management"""
 import autogen
 from typing import Dict, List, Optional
+from agentutils import research, analyze_data
+from copy import deepcopy
 
 class BookAgents:
     def __init__(self, agent_config: Dict, outline: Optional[List[Dict]] = None):
@@ -27,15 +29,34 @@ class BookAgents:
         """Create and return all agents needed for book generation"""
         outline_context = self._format_outline_context()
         
+        # researcher_config = deepcopy(self.agent_config)
+        # # restrain the researcher to a more focused prompt
+        # researcher_config["temperature"] = 0.3
+        
+        # researcher = autogen.AssistantAgent(
+        #     name="researcher",
+        #     system_message=f"""
+        #         Researcher: Your role is to research {outline_context}.
+        #         - Use the provided 'research' function to gather data.
+        #         - Use the 'analyze_data' function to extract key insights.
+        #         - Provide a comprehensive summary of your findings to the Story Planner.
+        #         START WITH 'RESEARCH:' AND END WITH 'END OF RESEARCH'
+        #     """,
+        #     llm_config=self.agent_config,
+        # )
+        
         # Memory Keeper: Maintains story continuity and context
         memory_keeper = autogen.AssistantAgent(
             name="memory_keeper",
             system_message=f"""You are the keeper of the story's continuity and context.
             Your responsibilities:
-            1. Track and summarize each chapter's key events
-            2. Monitor character development and relationships
-            3. Maintain world-building consistency
-            4. Flag any continuity issues
+            1. Research {outline_context}
+                - Use the provided 'research' function to gather data.
+                - Use the 'analyze_data' function to extract key insights.
+            2. Track and summarize each chapter's key events
+            3. Monitor character development and relationships
+            4. Maintain world-building consistency
+            5. Flag any continuity issues
             
             Book Overview:
             {outline_context}
@@ -221,6 +242,12 @@ class BookAgents:
             "user_proxy": user_proxy,
             "outline_creator": outline_creator
         }
+
+    def _research_task(message):
+        query = message.get("content", "")
+        research_data = research(query)
+        analysis_results = analyze_data(research_data)
+        return f"Research data: {research_data}\nAnalysis: {analysis_results}"
 
     def update_world_element(self, element_name: str, description: str) -> None:
         """Track a new or updated world element"""
