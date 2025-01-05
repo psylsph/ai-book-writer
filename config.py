@@ -6,7 +6,7 @@ def get_config(local_url: str = "http://localhost:11434/v1") -> Dict:
     
     # Basic config for local LLM
     config_list = [{
-        'model': 'mistral-8192',
+        'model': 'smallthinker-8192:latest',
         'base_url': local_url,
         'api_key': "not-needed",
         'price': [0,0],
@@ -16,9 +16,9 @@ def get_config(local_url: str = "http://localhost:11434/v1") -> Dict:
     # Common configuration for all agents
     agent_config = {
         "seed": 42,
-        "temperature": 0.8,
+        "temperature": 0.7,
         "config_list": config_list,
-        "timeout": 600,
+        "timeout": 1200,
         "cache_seed": None
     }
     

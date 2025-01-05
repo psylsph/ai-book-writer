@@ -1,8 +1,6 @@
 """Define the agents used in the book generation system with improved context management"""
 import autogen
 from typing import Dict, List, Optional
-from agentutils import research, analyze_data
-from copy import deepcopy
 
 class BookAgents:
     def __init__(self, agent_config: Dict, outline: Optional[List[Dict]] = None):
@@ -29,30 +27,13 @@ class BookAgents:
         """Create and return all agents needed for book generation"""
         outline_context = self._format_outline_context()
         
-        # researcher_config = deepcopy(self.agent_config)
-        # # restrain the researcher to a more focused prompt
-        # researcher_config["temperature"] = 0.3
-        
-        # researcher = autogen.AssistantAgent(
-        #     name="researcher",
-        #     system_message=f"""
-        #         Researcher: Your role is to research {outline_context}.
-        #         - Use the provided 'research' function to gather data.
-        #         - Use the 'analyze_data' function to extract key insights.
-        #         - Provide a comprehensive summary of your findings to the Story Planner.
-        #         START WITH 'RESEARCH:' AND END WITH 'END OF RESEARCH'
-        #     """,
-        #     llm_config=self.agent_config,
-        # )
-        
+       
         # Memory Keeper: Maintains story continuity and context
         memory_keeper = autogen.AssistantAgent(
             name="memory_keeper",
             system_message=f"""You are the keeper of the story's continuity and context.
             Your responsibilities:
-            1. Research {outline_context}
-                - Use the provided 'research' function to gather data.
-                - Use the 'analyze_data' function to extract key insights.
+            1. Remember the world and it's characters
             2. Track and summarize each chapter's key events
             3. Monitor character development and relationships
             4. Maintain world-building consistency
@@ -187,7 +168,7 @@ class BookAgents:
             3. Incorporate world-building details
             4. Create engaging prose
             5. Please make sure that you write the complete scene, do not leave it incomplete
-            6. Each chapter should target be at least 5000 words (approximately 30,000 characters). Consider this a hard requirement. If your output is shorter, continue writing until you reach this minimum length of 3000 words.
+            6. Each chapter MUST be at least 2000 words (approximately 30,000 characters). Consider this a hard requirement. If your output is shorter, continue writing until you reach this minimum length of 2000 words.
             7. Ensure transitions are smooth and logical
             8. Do not cut off the scene, make sure it has a proper ending
             9. Add a lot of details, and describe the environment and characters where it makes sense
@@ -212,7 +193,7 @@ class BookAgents:
             4. Improve prose quality
             5. Return complete edited chapter
             6. Never ask to start the next chapter, as the next step is finalizing this chapter
-            7. Each chapter should target to be at least 5000 words. If the content is shorter, return it to the writer for expansion. This is a hard requirement - do not approve chapters shorter than 3000 words. 
+            7. Each chapter MUST be at least 2000 words. If the content is shorter, return it to the writer for expansion. This is a hard requirement - do not approve chapters shorter than 2000 words. 
             
             Format your responses:
             1. Start critiques with 'FEEDBACK:'
@@ -242,12 +223,6 @@ class BookAgents:
             "user_proxy": user_proxy,
             "outline_creator": outline_creator
         }
-
-    def _research_task(message):
-        query = message.get("content", "")
-        research_data = research(query)
-        analysis_results = analyze_data(research_data)
-        return f"Research data: {research_data}\nAnalysis: {analysis_results}"
 
     def update_world_element(self, element_name: str, description: str) -> None:
         """Track a new or updated world element"""
