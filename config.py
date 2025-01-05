@@ -19,7 +19,7 @@ def get_config(local_url: str = "https://api.deepseek.com/v1") -> Dict:
         "temperature": 0.9,
         "config_list": config_list,
         "timeout": 600,
-        "cache_seed": 41
+        "cache_seed": None
     }
     
     return agent_config
