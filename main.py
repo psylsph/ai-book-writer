@@ -18,7 +18,7 @@ def main():
     Its important that it has several key storylines that intersect and influence each other. The story should be set in a world within the Minecraft game. The protagonist is a small boy named Matthew who has just fallen asleep in front of his computer while playing his favourite computer game Minecraft . When Matthew wakes up he is in the game, stuck he need to solves puzzles and travel through the Minecraft world to find a portal to get home.
 
     The piece is written in third-person limited perspective, following Matthew thoughts and experiences. The prose is direct and technical when describing the protagonist's work, but becomes more introspective during personal moments. The author employs a mix of dialogue and internal monologue, with particular attention to time progression and how Matthew might get home.
-    Story Arch:
+    Story Arc:
 
     Setup: Matthew falls a sleep late at night while playing Minecraft
     Initial Conflict: Matthew awakens in the game and realizes he is stuck

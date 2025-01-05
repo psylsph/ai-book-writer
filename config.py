@@ -2,25 +2,21 @@
 from typing import Dict
 import os
 
-def get_config(local_url: str = "https://api.deepseek.com/v1") -> Dict:
+def get_config() -> Dict:
     """Get the configuration for the agents"""
     
     # Basic config for local LLM
     config_list = [{
-        'model': 'deepseek-chat',
-        'base_url': local_url,
+        "model": "hf.co/bartowski/LongWriter-llama3.1-8b-GGUF:IQ4_XS",  # Using Ollama model
         'api_key': os.getenv("API_KEY"),
-        "price" : [0.014, 0.28]
+        "base_url": "https://localhost:11434/v1",
+        "price": [0,0]
     }]
 
     # Common configuration for all agents
     agent_config = {
-        "seed": 42,
         "temperature": 0.9,
         "config_list": config_list,
-        "api_type": "ollama",
-        "model": "mistral-16384",
-        "timeout": 600,
         "cache_seed": 41
     }
     
