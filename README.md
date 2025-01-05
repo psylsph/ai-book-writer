@@ -41,11 +41,8 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Set you're API Key
-* Create `.env` file with the following content
-```
-API_KEY="You DeepSeek API Key"
-```
+4. Set your API Key
+* Update `config.py` with your DeepSeek API Key
 
 ## Usage
 
@@ -57,6 +54,7 @@ API_KEY="You DeepSeek API Key"
 The system can be configured through `config.py`. Key configurations include:
 
 - LLM endpoint URL
+- LLM API Key
 
 ## Output Structure
 

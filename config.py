@@ -9,7 +9,7 @@ def get_config(local_url: str = "https://api.deepseek.com/v1") -> Dict:
     config_list = [{
         'model': 'deepseek-chat',
         'base_url': local_url,
-        'api_key': os.getenv("API_KEY"),
+        'api_key': "na",
         "price" : [0.014, 0.28]
     }]
 
@@ -18,8 +18,6 @@ def get_config(local_url: str = "https://api.deepseek.com/v1") -> Dict:
         "seed": 42,
         "temperature": 0.9,
         "config_list": config_list,
-        "api_type": "ollama",
-        "model": "mistral-16384",
         "timeout": 600,
         "cache_seed": 41
     }

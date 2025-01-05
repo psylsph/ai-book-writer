@@ -1,11 +1,11 @@
-
-
 """Main script for running the book generation system"""
 from dotenv import load_dotenv
 from config import get_config
 from agents import BookAgents
 from book_generator import BookGenerator
 from outline_generator import OutlineGenerator
+
+load_dotenv()
 
 def main():
     # Get configuration
