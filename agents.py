@@ -1,8 +1,6 @@
 """Define the agents used in the book generation system with improved context management"""
 import autogen
 from typing import Dict, List, Optional
-from agentutils import research, analyze_data
-
 
 class BookAgents:
     def __init__(self, agent_config: Dict, outline: Optional[List[Dict]] = None):
@@ -35,9 +33,7 @@ class BookAgents:
             name="memory_keeper",
             system_message=f"""You are the keeper of the story's continuity and context.
             Your responsibilities:
-            1. Research {outline_context}
-                - Use the provided 'research' function to gather data.
-                - Use the 'analyze_data' function to extract key insights.
+            1. Remember the world and it's characters
             2. Track and summarize each chapter's key events
             3. Monitor character development and relationships
             4. Maintain world-building consistency

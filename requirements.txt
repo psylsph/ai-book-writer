@@ -1,4 +1,2 @@
 autogen
-BeautifulSoup4
-spacy
 flaml[automl]
