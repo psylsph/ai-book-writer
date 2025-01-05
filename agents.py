@@ -224,12 +224,6 @@ class BookAgents:
             "outline_creator": outline_creator
         }
 
-    def _research_task(message):
-        query = message.get("content", "")
-        research_data = research(query)
-        analysis_results = analyze_data(research_data)
-        return f"Research data: {research_data}\nAnalysis: {analysis_results}"
-
     def update_world_element(self, element_name: str, description: str) -> None:
         """Track a new or updated world element"""
         self.world_elements[element_name] = description
