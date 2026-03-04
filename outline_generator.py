@@ -1,4 +1,5 @@
 """Generate book outlines using AutoGen agents with improved error handling and validation"""
+import re
 from typing import Any, Dict, List, Optional
 
 import autogen
@@ -160,6 +161,13 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
     def _extract_outline_content(self, messages: List[Dict[str, Any]]) -> str:
         """Extract outline content from messages"""
         logger.debug(f"Searching {len(messages)} messages for outline content")
+        
+        # Debug: Log all message senders to understand the conversation flow
+        sender_counts = {}
+        for msg in messages:
+            sender = msg.get("name", msg.get("role", "unknown"))
+            sender_counts[sender] = sender_counts.get(sender, 0) + 1
+        logger.debug(f"Message senders: {sender_counts}")
 
         # Look for content between "OUTLINE:" and "END OF OUTLINE"
         for msg in reversed(messages):
@@ -179,6 +187,10 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
             content = msg.get("content", "")
             if "Chapter 1:" in content or "**Chapter 1:**" in content:
                 return content
+            # Also look for "End of Chapter X" pattern which indicates narrative content
+            if "End of Chapter" in content:
+                logger.warning("Detected narrative content instead of outline format")
+                return content
 
         return ""
 
@@ -194,19 +206,25 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
                 chapter_info = self._extract_chapter_components(section, i)
                 if chapter_info:
                     chapters.append(chapter_info)
+                else:
+                    logger.debug(f"Chapter {i}: No extractable components found")
             except ValidationError as e:
                 logger.warning(f"Chapter {i} validation error: {e}")
                 continue
             except Exception as e:
                 logger.error(f"Unexpected error processing Chapter {i}: {e}")
                 continue
+        
+        logger.info(f"Parsed {len(chapters)} chapters from outline content")
 
         return chapters
 
     def _extract_chapter_components(
         self, section: str, chapter_num: int
     ) -> Optional[Dict[str, Any]]:
-        """Extract components from a single chapter section"""
+        """Extract components from a single chapter section with lenient parsing"""
+        logger.debug(f"Extracting components for chapter {chapter_num}, section length: {len(section)}")
+        
         # Extract required components using regex
         title_match = RegexPatterns.TITLE.search(section)
         title_alt_match = RegexPatterns.CHAPTER_TITLE_ALT.search(section)
@@ -218,58 +236,86 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
         # Use alternate title if primary not found
         if not title_match and title_alt_match:
             title_match = title_alt_match
+            logger.debug(f"Chapter {chapter_num}: Using alternate title pattern")
 
-        # Verify all components exist
-        if not all([title_match, events_match, character_match, setting_match, tone_match]):
-            missing = []
-            if not title_match:
-                missing.append("Title")
-            if not events_match:
-                missing.append("Key Events")
-            if not character_match:
-                missing.append("Character Developments")
-            if not setting_match:
-                missing.append("Setting")
-            if not tone_match:
-                missing.append("Tone")
-            logger.warning(f"Chapter {chapter_num} missing components: {', '.join(missing)}")
-            raise ValidationError(
-                f"Missing components: {', '.join(missing)}",
-                field="components",
-                value=missing
-            )
-
-        # Extract events and verify count
-        events_text = events_match.group(1).strip() if events_match else ""
-        events = RegexPatterns.BULLET_POINT.findall(events_text)
+        # Log what we found
+        found_components = []
+        if title_match:
+            found_components.append("Title")
+        if events_match:
+            found_components.append("Key Events")
+        if character_match:
+            found_components.append("Character Developments")
+        if setting_match:
+            found_components.append("Setting")
+        if tone_match:
+            found_components.append("Tone")
         
-        if len(events) < OutlineConstants.MIN_EVENTS_PER_CHAPTER:
-            raise ValidationError(
-                f"Chapter {chapter_num} has fewer than {OutlineConstants.MIN_EVENTS_PER_CHAPTER} events",
-                field="events",
-                value=len(events)
-            )
+        logger.debug(f"Chapter {chapter_num} found components: {found_components}")
 
-        # Build chapter info
-        title = title_match.group(1).strip() if title_match else f"Chapter {chapter_num}"
-        prompt = "\n".join([
-            f"- Key Events: {events_text}",
-            f"- Character Developments: {character_match.group(1).strip() if character_match else '[To be determined]'}",
-            f"- Setting: {setting_match.group(1).strip() if setting_match else '[To be determined]'}",
-            f"- Tone: {tone_match.group(1).strip() if tone_match else '[To be determined]'}",
-        ])
+        # If we have at least a title and some content, create a lenient chapter
+        if title_match or events_match:
+            # Extract events and verify count
+            events_text = events_match.group(1).strip() if events_match else "Develop the story forward"
+            events = RegexPatterns.BULLET_POINT.findall(events_text)
+            
+            # Build chapter info with fallbacks for missing components
+            title = title_match.group(1).strip() if title_match else f"Chapter {chapter_num}"
+            
+            # Build prompt with whatever we have
+            prompt_parts = [f"- Key Events: {events_text}"]
+            
+            if character_match:
+                prompt_parts.append(f"- Character Developments: {character_match.group(1).strip()}")
+            else:
+                prompt_parts.append("- Character Developments: Continue character arcs from previous chapters")
+            
+            if setting_match:
+                prompt_parts.append(f"- Setting: {setting_match.group(1).strip()}")
+            else:
+                prompt_parts.append("- Setting: Maintain consistent world setting")
+            
+            if tone_match:
+                prompt_parts.append(f"- Tone: {tone_match.group(1).strip()}")
+            else:
+                prompt_parts.append("- Tone: Match the established narrative tone")
 
-        return {
-            "chapter_number": chapter_num,
-            "title": title,
-            "prompt": prompt,
-        }
+            logger.info(f"Chapter {chapter_num}: Created with {len(found_components)} components (lenient mode)")
+            
+            return {
+                "chapter_number": chapter_num,
+                "title": title,
+                "prompt": "\n".join(prompt_parts),
+            }
+        
+        # If we have nothing, report what was missing
+        missing = []
+        if not title_match:
+            missing.append("Title")
+        if not events_match:
+            missing.append("Key Events")
+        if not character_match:
+            missing.append("Character Developments")
+        if not setting_match:
+            missing.append("Setting")
+        if not tone_match:
+            missing.append("Tone")
+        logger.warning(f"Chapter {chapter_num} missing components: {', '.join(missing)}")
+        
+        # Return None to skip this chapter - emergency processing will handle it
+        return None
 
     def _emergency_outline_processing(
         self, messages: List[Dict[str, Any]], num_chapters: int
     ) -> List[Dict[str, Any]]:
         """Emergency processing when normal outline extraction fails"""
         logger.warning("Attempting emergency outline processing")
+        
+        # Log last few messages for debugging
+        for msg in messages[-3:]:  # Last 3 messages
+            sender = msg.get("name", msg.get("role", "unknown"))
+            content_preview = msg.get("content", "")[:500]
+            logger.debug(f"Emergency processing - {sender}: {content_preview}...")
 
         chapters = []
         current_chapter: Optional[Dict[str, Any]] = None
@@ -277,12 +323,47 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
         # Look through all messages for any chapter content
         for msg in messages:
             content = msg.get("content", "")
+            
+            # Check for "End of Chapter X" pattern (indicates narrative content)
+            import re
+            end_chapter_matches = list(re.finditer(r'\*\*End of Chapter (\d+)\*\*', content, re.IGNORECASE))
+            if end_chapter_matches:
+                logger.info(f"Detected {len(end_chapter_matches)} 'End of Chapter' markers in narrative content")
+                for match in end_chapter_matches:
+                    chapter_num = int(match.group(1))
+                    # Extract content before this marker as chapter summary
+                    start_pos = max(0, content.rfind("***", 0, match.start()))
+                    if start_pos == 0:
+                        # Try finding start of chapter
+                        chapter_start = content.rfind(f"Chapter {chapter_num}", 0, match.start())
+                        if chapter_start > 0:
+                            start_pos = chapter_start
+                    
+                    chapter_content = content[start_pos:match.start()].strip()[:200]
+                    chapters.append({
+                        "chapter_number": chapter_num,
+                        "title": f"Chapter {chapter_num}",
+                        "prompt": (
+                            f"- Key events: Continue the story from previous developments\n"
+                            f"- Previous content summary: {chapter_content}...\n"
+                            f"- Character developments: Build on established arcs\n"
+                            f"- Setting: Maintain narrative world\n"
+                            f"- Tone: Match the ongoing narrative style"
+                        ),
+                    })
+                
+                if chapters:
+                    logger.info(f"Extracted {len(chapters)} chapters from narrative markers")
+                    break  # We found chapters in this message
+                continue
+            
+            # Traditional parsing for outline format
             lines = content.split("\n")
-
             for line in lines:
-                # Look for chapter markers
+                # Look for chapter markers (more flexible matching)
                 chapter_match = RegexPatterns.CHAPTER_NUMBER.search(line)
-                if chapter_match and "Key events:" in content.lower():
+                # Accept chapter markers with or without "Key events" in same content
+                if chapter_match:
                     if current_chapter and current_chapter.get("prompt"):
                         chapters.append(current_chapter)
 
@@ -294,10 +375,17 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
                         "prompt": [],
                     }
 
-                # Collect bullet points
-                if current_chapter and line.strip().startswith("-"):
-                    if isinstance(current_chapter["prompt"], list):
-                        current_chapter["prompt"].append(line.strip())
+                # Collect bullet points or any content after chapter marker
+                if current_chapter:
+                    line_stripped = line.strip()
+                    # Accept bullet points or lines with content
+                    if line_stripped.startswith("-") or line_stripped.startswith("*"):
+                        if isinstance(current_chapter["prompt"], list):
+                            current_chapter["prompt"].append(line_stripped)
+                    # Also capture any non-empty line that looks like content
+                    elif len(line_stripped) > 10 and not line_stripped.lower().startswith("chapter"):
+                        if isinstance(current_chapter["prompt"], list):
+                            current_chapter["prompt"].append(f"- {line_stripped}")
 
             # Add the last chapter if it exists
             if current_chapter and current_chapter.get("prompt"):
@@ -308,13 +396,26 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
 
         if not chapters:
             logger.error("Emergency processing failed to find any chapters")
-            return []
+            # Create placeholder chapters as last resort
+            logger.warning("Creating placeholder chapters as fallback")
+            for i in range(1, num_chapters + 1):
+                chapters.append({
+                    "chapter_number": i,
+                    "title": f"Chapter {i}",
+                    "prompt": (
+                        f"- Key events: Develop the story forward\n"
+                        f"- Character developments: Continue character arcs\n"
+                        f"- Setting: Maintain consistent world\n"
+                        f"- Tone: Match previous chapters"
+                    ),
+                })
+            return chapters
 
         # Sort and dedupe
         seen_numbers = set()
         unique_chapters = []
         for ch in sorted(chapters, key=lambda x: x["chapter_number"]):
-            if ch["chapter_number"] not in seen_numbers:
+            if ch["chapter_number"] not in seen_numbers and ch["chapter_number"] <= num_chapters:
                 seen_numbers.add(ch["chapter_number"])
                 unique_chapters.append(ch)
 

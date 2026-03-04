@@ -115,7 +115,11 @@ def run_book_generation(
         
         # Use planning model for outline generation agents
         outline_agent_config = config.get_agent_config_for_role("outline_creator")
-        outline_agents = BookAgents(outline_agent_config.to_dict(), num_chapters=num_chapters)
+        outline_agents = BookAgents(
+            outline_agent_config.to_dict(), 
+            num_chapters=num_chapters,
+            initial_prompt=initial_prompt  # Pass initial_prompt so world_builder has context
+        )
         agents = outline_agents.create_agents(initial_prompt, num_chapters)
         
         outline_gen = OutlineGenerator(agents, outline_agent_config.to_dict())

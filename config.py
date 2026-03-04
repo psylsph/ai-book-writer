@@ -22,6 +22,12 @@ class LLMProviderConfig:
     api_key: str
     timeout: int = ConfigConstants.DEFAULT_TIMEOUT
     max_tokens: Optional[int] = None
+    # Price per 1K tokens: [prompt_price, completion_price]
+    price: Optional[List[float]] = None  # e.g., [0.03, 0.06] for GPT-4
+    
+    def get_price_config(self) -> Optional[List[float]]:
+        """Get price configuration for cost tracking"""
+        return self.price
 
 
 @dataclass
@@ -88,6 +94,17 @@ class AppConfig:
     # Logging settings
     log_level: str = LoggingConstants.DEFAULT_LOG_LEVEL
     
+    # Caching settings
+    enable_caching: bool = False  # Set to True to enable LLM response caching
+    cache_seed: int = 42  # Seed for cache (used when enable_caching=True)
+    
+    # Pricing settings (for cost tracking with AutoGen)
+    # Format: [prompt_price_per_1k, completion_price_per_1k] in USD
+    # Example for GPT-4: [0.03, 0.06]
+    # Example for GPT-3.5: [0.0015, 0.002]
+    price_prompt_per_1k: Optional[float] = None
+    price_completion_per_1k: Optional[float] = None
+    
     def __post_init__(self):
         """Load configuration from environment variables"""
         # OpenAI settings
@@ -143,20 +160,52 @@ class AppConfig:
         self.local_planning_url = os.getenv("LOCAL_PLANNING_URL") or self.local_url
         if os.getenv("LOCAL_PLANNING_TEMPERATURE"):
             self.local_planning_temperature = float(os.getenv("LOCAL_PLANNING_TEMPERATURE"))
+        
+        # Caching configuration
+        cache_env = os.getenv("LLM_CACHE_ENABLED", "false").lower()
+        self.enable_caching = cache_env in ("true", "1", "yes", "on")
+        if os.getenv("LLM_CACHE_SEED"):
+            self.cache_seed = int(os.getenv("LLM_CACHE_SEED"))
+        
+        # Pricing configuration (for cost tracking)
+        if os.getenv("LLM_PRICE_PROMPT_PER_1K"):
+            self.price_prompt_per_1k = float(os.getenv("LLM_PRICE_PROMPT_PER_1K"))
+        if os.getenv("LLM_PRICE_COMPLETION_PER_1K"):
+            self.price_completion_per_1k = float(os.getenv("LLM_PRICE_COMPLETION_PER_1K"))
     
     def get_agent_config(self) -> AgentConfig:
         """Get AutoGen-compatible agent configuration"""
+        import logging
+        logger = logging.getLogger("config")
+        
         provider_config = self._get_provider_config()
+        
+        # Determine cache seed (None = caching disabled)
+        cache_seed_value = self.cache_seed if self.enable_caching else None
+        
+        if self.enable_caching:
+            logger.info(f"LLM caching enabled with seed: {self.cache_seed}")
+        else:
+            logger.debug("LLM caching disabled")
+        
+        # Build config dict with optional price
+        config_item = {
+            "model": provider_config.model,
+            "base_url": provider_config.base_url,
+            "api_key": provider_config.api_key
+        }
+        
+        # Add price if configured
+        if provider_config.price:
+            config_item["price"] = provider_config.price
+            logger.debug(f"Using custom pricing: ${provider_config.price[0]}/1K prompt, ${provider_config.price[1]}/1K completion")
         
         return AgentConfig(
             seed=ConfigConstants.DEFAULT_SEED,
             temperature=ConfigConstants.DEFAULT_TEMPERATURE,
             timeout=provider_config.timeout,
-            config_list=[{
-                "model": provider_config.model,
-                "base_url": provider_config.base_url,
-                "api_key": provider_config.api_key
-            }]
+            cache_seed=cache_seed_value,
+            config_list=[config_item]
         )
     
     def get_agent_config_for_role(self, role: str) -> AgentConfig:
@@ -168,39 +217,68 @@ class AppConfig:
         Returns:
             AgentConfig appropriate for that role
         """
+        import logging
+        logger = logging.getLogger("config")
+        
         # Determine which model to use based on role
         is_creative_role = role in ["writer"]
         is_planning_role = role in ["story_planner", "world_builder", "memory_keeper", 
                                     "editor", "outline_creator"]
         
+        # Determine cache seed (None = caching disabled)
+        cache_seed_value = self.cache_seed if self.enable_caching else None
+        
+        # Build config item with optional pricing
+        def build_config_item(model: str, base_url: str, api_key: str) -> Dict:
+            item = {
+                "model": model,
+                "base_url": base_url,
+                "api_key": api_key
+            }
+            price_list = self._get_price_list()
+            if price_list:
+                item["price"] = price_list
+            return item
+        
         if self.provider == "local":
             if is_creative_role and self.local_creative_model:
                 # Use creative model with creative temperature
+                logger.info(f"Role '{role}' using creative model: {self.local_creative_model}")
                 return AgentConfig(
                     seed=ConfigConstants.DEFAULT_SEED,
                     temperature=self.local_creative_temperature,
                     timeout=ConfigConstants.DEFAULT_TIMEOUT,
-                    config_list=[{
-                        "model": self.local_creative_model,
-                        "base_url": self.local_creative_url or self.local_url,
-                        "api_key": self.local_api_key
-                    }]
+                    cache_seed=cache_seed_value,
+                    config_list=[build_config_item(
+                        self.local_creative_model,
+                        self.local_creative_url or self.local_url,
+                        self.local_api_key
+                    )]
                 )
             elif is_planning_role and self.local_planning_model:
                 # Use planning/review model with planning temperature
+                logger.info(f"Role '{role}' using planning model: {self.local_planning_model}")
                 return AgentConfig(
                     seed=ConfigConstants.DEFAULT_SEED,
                     temperature=self.local_planning_temperature,
                     timeout=ConfigConstants.DEFAULT_TIMEOUT,
-                    config_list=[{
-                        "model": self.local_planning_model,
-                        "base_url": self.local_planning_url or self.local_url,
-                        "api_key": self.local_api_key
-                    }]
+                    cache_seed=cache_seed_value,
+                    config_list=[build_config_item(
+                        self.local_planning_model,
+                        self.local_planning_url or self.local_url,
+                        self.local_api_key
+                    )]
                 )
         
         # Fallback to default configuration
+        logger.info(f"Role '{role}' using default model: {self.local_model}")
         return self.get_agent_config()
+    
+    def _get_price_list(self) -> Optional[List[float]]:
+        """Get price list for cost tracking if both prices are configured"""
+        if self.price_prompt_per_1k is not None and self.price_completion_per_1k is not None:
+            return [self.price_prompt_per_1k, self.price_completion_per_1k]
+        return None
     
     def _get_provider_config(self) -> LLMProviderConfig:
         """Get configuration for the selected provider"""
@@ -319,6 +397,20 @@ BOOK_OUTPUT_DIR=book_output
 
 # Logging
 BOOK_LOG_LEVEL=INFO
+
+# LLM Caching (optional)
+# Enable to cache LLM responses and avoid redundant API calls
+# Set to 'true' to enable, 'false' to disable (default)
+LLM_CACHE_ENABLED=false
+# Cache seed - change this to invalidate cache and get fresh responses
+LLM_CACHE_SEED=42
+
+# LLM Pricing (optional, for cost tracking)
+# Format: price per 1K tokens in USD
+# Example for GPT-4: LLM_PRICE_PROMPT_PER_1K=0.03, LLM_PRICE_COMPLETION_PER_1K=0.06
+# Example for GPT-3.5: LLM_PRICE_PROMPT_PER_1K=0.0015, LLM_PRICE_COMPLETION_PER_1K=0.002
+# LLM_PRICE_PROMPT_PER_1K=0.0
+# LLM_PRICE_COMPLETION_PER_1K=0.0
 """
 
 

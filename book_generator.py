@@ -60,15 +60,59 @@ class BookGenerator:
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"BookGenerator initialized with output dir: {self.output_dir}")
 
-    def generate_book(self, outline: List[Dict[str, Any]]) -> None:
-        """Generate the book with strict chapter sequencing"""
+    def _find_resume_point(self, outline: List[Dict[str, Any]]) -> int:
+        """Find which chapter to resume from based on existing files"""
+        for chapter in sorted(outline, key=lambda x: x["chapter_number"]):
+            chapter_number = chapter["chapter_number"]
+            chapter_file = os.path.join(
+                self.output_dir, format_chapter_filename(chapter_number)
+            )
+            
+            if not os.path.exists(chapter_file):
+                logger.info(f"Resuming from Chapter {chapter_number}")
+                return chapter_number
+                
+            # Check if file is valid
+            try:
+                with open(chapter_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if not self._verify_chapter_content(content, chapter_number):
+                        logger.info(f"Chapter {chapter_number} exists but is invalid, regenerating")
+                        return chapter_number
+            except Exception:
+                return chapter_number
+                
+        logger.info("All chapters already generated")
+        return len(outline) + 1
+
+    def generate_book(self, outline: List[Dict[str, Any]], resume: bool = True) -> None:
+        """Generate the book with strict chapter sequencing
+        
+        Args:
+            outline: List of chapter specifications
+            resume: If True, skip chapters that already exist and are valid
+        """
         logger.info("Starting Book Generation")
         logger.info(f"Total chapters: {len(outline)}")
 
         # Sort outline by chapter number
         sorted_outline = sorted(outline, key=lambda x: x["chapter_number"])
+        
+        # Find resume point if requested
+        start_chapter = 1
+        if resume:
+            start_chapter = self._find_resume_point(outline)
+            if start_chapter > len(outline):
+                logger.info("All chapters already generated and valid")
+                return
 
         for chapter in sorted_outline:
+            chapter_number = chapter["chapter_number"]
+            
+            # Skip chapters before resume point
+            if chapter_number < start_chapter:
+                logger.info(f"Skipping Chapter {chapter_number} (already exists)")
+                continue
             chapter_number = chapter["chapter_number"]
 
             # Verify previous chapter exists and is valid
@@ -84,11 +128,13 @@ class BookGenerator:
                 self.generate_chapter(chapter_number, chapter["prompt"])
             except ChapterError as e:
                 logger.error(f"Chapter {chapter_number} generation failed: {e}")
+                self._save_checkpoint(chapter_number, f"failed_{e.__class__.__name__}", {"error": str(e)})
                 raise
 
             # Verify current chapter
             if not self._verify_chapter_file(chapter_number):
                 logger.error(f"Failed to generate chapter {chapter_number}")
+                self._save_checkpoint(chapter_number, "verify_failed", {})
                 break
 
             logger.info(f"✓ Chapter {chapter_number} complete")
@@ -195,6 +241,7 @@ class BookGenerator:
             raise
         except Exception as e:
             logger.error(f"Error in chapter {chapter_number}: {e}")
+            self._save_checkpoint(chapter_number, "error", {"error": str(e), "messages": messages if 'messages' in locals() else []})
             self._handle_chapter_generation_failure(chapter_number, prompt)
 
     def _create_group_chat(self) -> autogen.GroupChat:
@@ -227,6 +274,29 @@ class BookGenerator:
             max_round=GroupChatConstants.CHAPTER_MAX_ROUNDS,
             speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION
         )
+
+    def _save_checkpoint(self, chapter_number: int, stage: str, data: Dict[str, Any]) -> None:
+        """Save checkpoint data for debugging and resume support"""
+        import json
+        from datetime import datetime
+        
+        checkpoint_dir = os.path.join(self.output_dir, "checkpoints")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        checkpoint = {
+            "timestamp": datetime.now().isoformat(),
+            "chapter_number": chapter_number,
+            "stage": stage,
+            "data": data
+        }
+        
+        filename = os.path.join(checkpoint_dir, f"chapter_{chapter_number:02d}_{stage}.json")
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(checkpoint, f, indent=2, default=str)
+            logger.debug(f"Checkpoint saved: {filename}")
+        except Exception as e:
+            logger.warning(f"Failed to save checkpoint: {e}")
 
     def _build_chapter_prompt(self, chapter_number: int, prompt: str) -> str:
         """Prepare context for chapter generation"""
@@ -271,6 +341,21 @@ Wait for each step to complete before proceeding."""
             prompt
         ]
         return "\n".join(context_parts)
+
+    def _save_conversation_log(self, chapter_number: int, messages: List[Dict[str, Any]]) -> None:
+        """Save conversation log for debugging"""
+        import json
+        
+        log_dir = os.path.join(self.output_dir, "conversation_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        
+        filename = os.path.join(log_dir, f"chapter_{chapter_number:02d}_conversation.json")
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(messages, f, indent=2, default=str)
+            logger.debug(f"Conversation log saved: {filename}")
+        except Exception as e:
+            logger.warning(f"Failed to save conversation log: {e}")
 
     def _verify_chapter_complete(
         self, messages: List[Dict[str, Any]], chapter_number: int
@@ -325,6 +410,9 @@ Wait for each step to complete before proceeding."""
     ) -> None:
         """Process and save chapter results, updating memory"""
         logger.debug(f"Processing chapter {chapter_number} results")
+        
+        # Save conversation log for debugging
+        self._save_conversation_log(chapter_number, messages)
 
         # Extract Memory Keeper's summary
         memory_update = None
@@ -367,6 +455,12 @@ Wait for each step to complete before proceeding."""
             )
 
         chapter_content = clean_chapter_content(chapter_content)
+        
+        # Save checkpoint before file operations
+        self._save_checkpoint(chapter_number, "content_extracted", {
+            "word_count": len(chapter_content.split()),
+            "content_preview": chapter_content[:500]
+        })
 
         # Validate content length
         word_count = count_words(chapter_content)
@@ -412,27 +506,45 @@ Wait for each step to complete before proceeding."""
 
     def _extract_final_scene(self, messages: List[Dict[str, Any]]) -> Optional[str]:
         """Extract chapter content with improved content detection"""
+        logger.debug(f"Extracting final scene from {len(messages)} messages")
+        
         for msg in reversed(messages):
             content = msg.get("content", "")
             sender = get_sender_from_message(msg)
+            
+            logger.debug(f"Checking message from {sender}: {len(content)} chars")
 
             if sender in ["writer", "writer_final"]:
                 # Handle complete scene content
                 if AgentConstants.SCENE_FINAL_TAG in content:
                     parts = content.split(AgentConstants.SCENE_FINAL_TAG)
                     if len(parts) > 1 and parts[1].strip():
+                        logger.debug(f"Found SCENE_FINAL_TAG content: {len(parts[1])} chars")
                         return parts[1].strip()
 
                 # Fallback to scene content
                 if AgentConstants.SCENE_TAG in content:
                     parts = content.split(AgentConstants.SCENE_TAG)
                     if len(parts) > 1 and parts[1].strip():
+                        logger.debug(f"Found SCENE_TAG content: {len(parts[1])} chars")
                         return parts[1].strip()
 
-                # Handle raw content
-                if len(content.strip()) > 100:
-                    return content.strip()
+                # Handle raw content - look for substantial text that looks like a chapter
+                content_stripped = content.strip()
+                if len(content_stripped) > 500:  # Lowered threshold but still substantial
+                    # Check if it looks like narrative content (has sentences, paragraphs)
+                    if "." in content_stripped and len(content_stripped.split()) > 100:
+                        logger.debug(f"Found raw content: {len(content_stripped)} chars, {len(content_stripped.split())} words")
+                        return content_stripped
 
+        logger.warning("No chapter content found in any message")
+        # Debug: log all writer messages to see what we got
+        for msg in messages:
+            sender = get_sender_from_message(msg)
+            if sender in ["writer", "writer_final"]:
+                content = msg.get("content", "")
+                logger.debug(f"Writer message preview: {content[:200]}...")
+        
         return None
 
     def _handle_chapter_generation_failure(
@@ -443,14 +555,21 @@ Wait for each step to complete before proceeding."""
 
         try:
             # Create a new group chat with just essential agents
+            # Note: story_planner may not be in self.agents, use writer directly
+            available_agents = [
+                self.agents["user_proxy"],
+                self.agents["writer"]
+            ]
+            
+            # Add memory_keeper if available
+            if "memory_keeper" in self.agents:
+                available_agents.insert(1, self.agents["memory_keeper"])
+
             retry_groupchat = autogen.GroupChat(
-                agents=[
-                    self.agents["user_proxy"],
-                    self.agents["story_planner"],
-                    self.agents["writer"]
-                ],
+                agents=available_agents,
                 messages=[],
-                max_round=3
+                max_round=GroupChatConstants.REPLY_MAX_ROUNDS,
+                speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION
             )
 
             manager = autogen.GroupChatManager(
@@ -458,19 +577,32 @@ Wait for each step to complete before proceeding."""
                 llm_config=self.agent_config
             )
 
-            retry_prompt = f"""Emergency chapter generation for Chapter {chapter_number}.
+            retry_prompt = f"""EMERGENCY CHAPTER GENERATION for Chapter {chapter_number}.
 
+Previous attempt failed. Generate this chapter NOW.
+
+Chapter Requirements:
 {prompt}
 
-Please generate this chapter in two steps:
-1. Story Planner: Create a basic outline (tag: PLAN)
-2. Writer: Write the complete chapter (tag: SCENE FINAL)
+INSTRUCTIONS:
+1. Write the complete chapter content
+2. Make it at least 5000 words
+3. Start with: "Chapter {chapter_number}: [Title]"
+4. End with: "END OF CHAPTER {chapter_number}"
+5. Just write the story - no outlines, no planning, no meta-commentary
 
-Keep it simple and direct."""
+WRITE THE CHAPTER NOW."""
 
             self.agents["user_proxy"].initiate_chat(
                 manager, message=retry_prompt
             )
+
+            # Log what we got for debugging
+            logger.debug(f"Retry produced {len(retry_groupchat.messages)} messages")
+            for i, msg in enumerate(retry_groupchat.messages[-3:]):
+                sender = get_sender_from_message(msg)
+                content = msg.get("content", "")
+                logger.debug(f"Retry message {i} from {sender}: {len(content)} chars")
 
             # Save the retry results
             self._process_chapter_results(chapter_number, retry_groupchat.messages)

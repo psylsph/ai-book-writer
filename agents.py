@@ -18,11 +18,20 @@ class BookAgents:
         agent_config: Dict[str, Any],
         outline: Optional[List[Dict[str, Any]]] = None,
         num_chapters: Optional[int] = None,
+        initial_prompt: Optional[str] = None,
     ):
-        """Initialize agents with book outline context"""
+        """Initialize agents with book outline context
+        
+        Args:
+            agent_config: Configuration for AutoGen agents
+            outline: Book outline with chapter information (for book generation phase)
+            num_chapters: Total number of chapters
+            initial_prompt: Initial story premise (for outline generation phase)
+        """
         self.agent_config = agent_config
         self.outline = outline
         self.num_chapters = num_chapters or ChapterConstants.DEFAULT_NUM_CHAPTERS
+        self.initial_prompt = initial_prompt or ""
         self.world_elements: Dict[str, str] = {}
         self.character_developments: Dict[str, List[str]] = {}
         logger.debug("BookAgents initialized")
@@ -85,6 +94,9 @@ class BookAgents:
 
     def _create_memory_keeper(self, outline_context: str) -> autogen.AssistantAgent:
         """Create the Memory Keeper agent"""
+        # Use initial prompt if no outline context available (during outline generation)
+        context = outline_context if outline_context else f"Story Premise:\n{self.initial_prompt}"
+        
         return autogen.AssistantAgent(
             name="memory_keeper",
             system_message=f"""You are the keeper of the story's continuity and context.
@@ -95,8 +107,8 @@ Your responsibilities:
 3. Maintain world-building consistency
 4. Flag any continuity issues
 
-Book Overview:
-{outline_context}
+Story Context:
+{context}
 
 Format your responses as follows:
 - Start updates with '{AgentConstants.MEMORY_UPDATE_TAG}'
@@ -176,14 +188,17 @@ START WITH '{AgentConstants.OUTLINE_START_TAG}' AND END WITH '{AgentConstants.OU
 
     def _create_world_builder(self, outline_context: str) -> autogen.AssistantAgent:
         """Create the World Builder agent"""
+        # Use initial prompt if no outline context available (during outline generation)
+        context = outline_context if outline_context else f"Story Premise:\n{self.initial_prompt}"
+        
         return autogen.AssistantAgent(
             name="world_builder",
             system_message=f"""You are an expert in world-building who creates rich, consistent settings.
 
-Your role is to establish ALL settings and locations needed for the entire story based on a provided story arc.
+Your role is to establish ALL settings and locations needed for the entire story.
 
-Book Overview:
-{outline_context}
+Story Context:
+{context}
 
 Your responsibilities:
 1. Review the story arc to identify every location and setting needed

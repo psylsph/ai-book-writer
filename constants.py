@@ -40,8 +40,8 @@ class OutlineConstants:
 class GroupChatConstants:
     """Group chat configuration constants"""
     OUTLINE_MAX_ROUNDS = 4
-    CHAPTER_MAX_ROUNDS = 5
-    REPLY_MAX_ROUNDS = 3  # For retry attempts
+    CHAPTER_MAX_ROUNDS = 15  # Increased to allow more rounds for complex chapters
+    REPLY_MAX_ROUNDS = 5  # For retry attempts
     SPEAKER_SELECTION = "round_robin"
 
 
