@@ -1,16 +1,52 @@
 """Main script for running the book generation system"""
-from config import get_config
+import argparse
+import logging
+import sys
+from pathlib import Path
+from typing import Optional
+
 from agents import BookAgents
 from book_generator import BookGenerator
+from config import get_app_config, AppConfig, create_env_template
 from outline_generator import OutlineGenerator
+from utils import get_logger, setup_logging
 
-def main():
-    # Get configuration
-    agent_config = get_config()
 
+def load_prompt_from_file(filepath: str) -> str:
+    """Load story prompt from a markdown or text file
     
-    # Initial prompt for the book
-    initial_prompt = """
+    Args:
+        filepath: Path to the file containing the story outline
+        
+    Returns:
+        The file contents as a string
+        
+    Raises:
+        FileNotFoundError: If the file doesn't exist
+        ValueError: If the file is empty
+    """
+    path = Path(filepath)
+    
+    if not path.exists():
+        raise FileNotFoundError(f"Prompt file not found: {filepath}")
+    
+    if not path.is_file():
+        raise ValueError(f"Path is not a file: {filepath}")
+    
+    content = path.read_text(encoding='utf-8').strip()
+    
+    if not content:
+        raise ValueError(f"Prompt file is empty: {filepath}")
+    
+    logger = get_logger("main")
+    logger.info(f"Loaded prompt from {filepath} ({len(content)} characters)")
+    
+    return content
+
+
+def get_initial_prompt() -> str:
+    """Get the initial story prompt"""
+    return """
     Create a story in my established writing style with these key elements:
     Its important that it has several key storylines that intersect and influence each other. The story should be set in a modern corporate environment, with a focus on technology and finance. The protagonist is a software engineer named Dane who has just completed a groundbreaking stock prediction algorithm. The algorithm predicts a catastrophic market crash, but Dane oversleeps and must rush to an important presentation to share his findings with executives. The tension arises from the questioning of whether his "error" might actually be correct.
 
@@ -43,44 +79,205 @@ def main():
     The story creates tension between the familiar corporate world and the potential for an unprecedented financial catastrophe, blending elements of technical thriller with workplace drama. The setting feels grounded in reality but hints at potentially apocalyptic economic consequences.
     """
 
-    num_chapters = 25
-    # Create agents
-    outline_agents = BookAgents(agent_config)
-    agents = outline_agents.create_agents(initial_prompt, num_chapters)
+
+def run_book_generation(
+    config: Optional[AppConfig] = None,
+    custom_prompt: Optional[str] = None,
+) -> None:
+    """Run the complete book generation process
     
-    # Generate the outline
-    outline_gen = OutlineGenerator(agents, agent_config)
-    print("Generating book outline...")
-    outline = outline_gen.generate_outline(initial_prompt, num_chapters)
+    Args:
+        config: Application configuration (uses defaults if not provided)
+        custom_prompt: Optional custom story prompt to use instead of default
+    """
+    logger = get_logger("main")
+    logger.info("=" * 50)
+    logger.info("Starting Book Generator")
+    logger.info("=" * 50)
     
-    # Create new agents with outline context
-    book_agents = BookAgents(agent_config, outline)
-    agents_with_context = book_agents.create_agents(initial_prompt, num_chapters)
+    # Get or create configuration
+    if config is None:
+        config = get_app_config()
     
-    # Initialize book generator with contextual agents
-    book_gen = BookGenerator(agents_with_context, agent_config, outline)
+    logger.info(f"Using LLM provider: {config.provider}")
+    logger.info(f"Output directory: {config.output_dir}")
+    logger.info(f"Number of chapters: {config.default_num_chapters}")
     
-    # Print the generated outline
-    print("\nGenerated Outline:")
-    for chapter in outline:
-        print(f"\nChapter {chapter['chapter_number']}: {chapter['title']}")
-        print("-" * 50)
-        print(chapter['prompt'])
+    # Get the story prompt
+    initial_prompt = custom_prompt or get_initial_prompt()
+    num_chapters = config.default_num_chapters
     
-    # Save the outline for reference
-    print("\nSaving outline to file...")
-    with open("book_output/outline.txt", "w") as f:
+    try:
+        # Phase 1: Generate Outline
+        logger.info("\n" + "=" * 50)
+        logger.info("Phase 1: Generating Book Outline")
+        logger.info("=" * 50)
+        
+        # Use planning model for outline generation agents
+        outline_agent_config = config.get_agent_config_for_role("outline_creator")
+        outline_agents = BookAgents(outline_agent_config.to_dict(), num_chapters=num_chapters)
+        agents = outline_agents.create_agents(initial_prompt, num_chapters)
+        
+        outline_gen = OutlineGenerator(agents, outline_agent_config.to_dict())
+        outline = outline_gen.generate_outline(initial_prompt, num_chapters)
+        
+        if not outline:
+            logger.error("Failed to generate outline")
+            sys.exit(1)
+        
+        logger.info(f"\nGenerated Outline ({len(outline)} chapters):")
         for chapter in outline:
-            f.write(f"\nChapter {chapter['chapter_number']}: {chapter['title']}\n")
-            f.write("-" * 50 + "\n")
-            f.write(chapter['prompt'] + "\n")
-    
-    # Generate the book using the outline
-    print("\nGenerating book chapters...")
-    if outline:
+            logger.info(f"\nChapter {chapter['chapter_number']}: {chapter['title']}")
+            logger.info("-" * 50)
+            logger.debug(chapter['prompt'])
+        
+        # Phase 2: Generate Book
+        logger.info("\n" + "=" * 50)
+        logger.info("Phase 2: Generating Book Chapters")
+        logger.info("=" * 50)
+        
+        # Use creative model for writer, planning model for other agents
+        writer_config = config.get_agent_config_for_role("writer")
+        editor_config = config.get_agent_config_for_role("editor")
+        memory_config = config.get_agent_config_for_role("memory_keeper")
+        
+        # For book generation, we use the writer config as base
+        book_agents = BookAgents(writer_config.to_dict(), outline=outline, num_chapters=num_chapters)
+        agents_with_context = book_agents.create_agents(initial_prompt, num_chapters)
+        
+        book_gen = BookGenerator(
+            agents_with_context,
+            writer_config.to_dict(),
+            outline,
+            output_dir=config.output_dir
+        )
+        
         book_gen.generate_book(outline)
-    else:
-        print("Error: No outline was generated.")
+        
+        # Phase 3: Summary
+        logger.info("\n" + "=" * 50)
+        logger.info("Book Generation Complete!")
+        logger.info("=" * 50)
+        
+        stats = book_gen.get_book_stats()
+        logger.info(f"\nStatistics:")
+        logger.info(f"Total chapters generated: {stats['total_chapters']}")
+        logger.info(f"Total word count: {stats['total_words']:,}")
+        
+        if stats['chapters']:
+            avg_words = stats['total_words'] // stats['total_chapters']
+            logger.info(f"Average words per chapter: {avg_words:,}")
+        
+        logger.info(f"\nOutput saved to: {config.output_dir}")
+        
+    except Exception as e:
+        logger.exception("Book generation failed")
+        logger.error(f"Error: {e}")
+        sys.exit(1)
+
+
+def parse_arguments():
+    """Parse command-line arguments"""
+    parser = argparse.ArgumentParser(
+        description="AI Book Generator - Generate complete books using collaborative AI agents",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run with default settings
+  python main.py
+  
+  # Load story from markdown file
+  python main.py --prompt story.md
+  
+  # Specify number of chapters
+  python main.py --prompt story.md --chapters 10
+  
+  # Use specific provider
+  python main.py --provider openai --prompt story.md
+        """
+    )
+    
+    parser.add_argument(
+        "--prompt", "-p",
+        type=str,
+        help="Path to a markdown/text file containing the story outline"
+    )
+    
+    parser.add_argument(
+        "--chapters", "-c",
+        type=int,
+        default=None,
+        help="Number of chapters to generate (overrides .env setting)"
+    )
+    
+    parser.add_argument(
+        "--provider",
+        type=str,
+        choices=["local", "openai", "azure"],
+        help="LLM provider to use (overrides .env setting)"
+    )
+    
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        help="Output directory (overrides .env setting)"
+    )
+    
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level"
+    )
+    
+    return parser.parse_args()
+
+
+def main():
+    """Main entry point with CLI support"""
+    # Parse arguments first
+    args = parse_arguments()
+    
+    # Setup logging early
+    setup_logging(level=args.log_level)
+    logger = get_logger("main")
+    
+    # Load prompt from file if specified
+    custom_prompt = None
+    if args.prompt:
+        try:
+            custom_prompt = load_prompt_from_file(args.prompt)
+        except (FileNotFoundError, ValueError) as e:
+            logger.error(f"Failed to load prompt file: {e}")
+            sys.exit(1)
+    
+    # Build configuration
+    config_kwargs = {}
+    if args.provider:
+        config_kwargs["provider"] = args.provider
+    if args.output:
+        config_kwargs["output_dir"] = args.output
+    
+    try:
+        config = get_app_config(**config_kwargs)
+        
+        # Override chapters if specified
+        if args.chapters:
+            config.default_num_chapters = args.chapters
+            logger.info(f"Overriding chapter count: {args.chapters}")
+        
+        # Run book generation
+        run_book_generation(
+            config=config,
+            custom_prompt=custom_prompt
+        )
+    except KeyboardInterrupt:
+        logger.info("\nGeneration interrupted by user")
+        sys.exit(0)
+    except Exception as e:
+        logger.exception("Unexpected error")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
