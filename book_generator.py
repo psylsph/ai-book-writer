@@ -11,24 +11,10 @@ import time
 from typing import Any, Dict, List, Optional
 
 # AutoGen 2.0 imports
-try:
-    from autogen_agentchat.teams import RoundRobinGroupChat
-    from autogen_agentchat.conditions import MaxMessageTermination
-    from autogen_agentchat.agents import AssistantAgent
-    AUTOGEN_2_AVAILABLE = True
-except ImportError:
-    AUTOGEN_2_AVAILABLE = False
-    RoundRobinGroupChat = None
-    MaxMessageTermination = None
-    AssistantAgent = None
-
-# Legacy AutoGen imports
-try:
-    import autogen as autogen_legacy
-    AUTOGEN_LEGACY_AVAILABLE = True
-except ImportError:
-    AUTOGEN_LEGACY_AVAILABLE = False
-    autogen_legacy = None
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.conditions import MaxMessageTermination
+from autogen_agentchat.agents import AssistantAgent
+AUTOGEN_2_AVAILABLE = True
 
 from constants import (
     AgentConstants,
@@ -254,10 +240,7 @@ class BookGenerator:
         messages: List[Dict[str, Any]] = []
 
         try:
-            if self.use_autogen2:
-                messages = self._generate_chapter_autogen2(chapter_number, prompt)
-            else:
-                messages = self._generate_chapter_legacy(chapter_number, prompt)
+            messages = self._generate_chapter_autogen2(chapter_number, prompt)
 
             # Check if chapter generation sequence is complete
             # If complete, discard any messages that came after completion
@@ -336,26 +319,6 @@ class BookGenerator:
                 self._handle_chapter_generation_failure(chapter_number, prompt)
             else:
                 logger.info("Chapter file exists despite error, continuing...")
-
-    def _generate_chapter_legacy(
-        self, chapter_number: int, prompt: str
-    ) -> List[Dict[str, Any]]:
-        """Generate chapter using legacy AutoGen"""
-        if not AUTOGEN_LEGACY_AVAILABLE or autogen_legacy is None:
-            raise ImportError("Legacy AutoGen not available. Install with: pip install pyautogen")
-
-        groupchat = self._create_group_chat_legacy()
-        manager = autogen_legacy.GroupChatManager(
-            groupchat=groupchat, llm_config=self.agent_config
-        )
-
-        chapter_prompt = self._build_chapter_prompt(chapter_number, prompt)
-
-        # Start generation
-        self.agents["user_proxy"].initiate_chat(manager, message=chapter_prompt)
-        messages = groupchat.messages
-
-        return messages
 
     def _generate_chapter_autogen2(
         self, chapter_number: int, prompt: str
@@ -451,40 +414,6 @@ class BookGenerator:
                     return i
 
         return None
-
-    def _create_group_chat_legacy(self) -> Any:
-        """Create a new group chat for the agents (legacy)"""
-        if autogen_legacy is None:
-            raise ImportError("Legacy AutoGen not available")
-
-        outline_context = "\n".join([
-            f"\nChapter {ch['chapter_number']}: {ch['title']}\n{ch['prompt']}"
-            for ch in sorted(self.outline, key=lambda x: x["chapter_number"])
-        ])
-
-        messages = [{
-            "role": "system",
-            "content": f"Complete Book Outline:\n{outline_context}"
-        }]
-
-        writer_final = autogen_legacy.ConversableAgent(
-            name="writer_final",
-            system_message=self.agents["writer"].system_message,
-            llm_config=self.agent_config
-        )
-
-        return autogen_legacy.GroupChat(
-            agents=[
-                self.agents["user_proxy"],
-                self.agents["memory_keeper"],
-                self.agents["writer"],
-                self.agents["editor"],
-                writer_final
-            ],
-            messages=messages,
-            max_round=10,  # Reduced from CHAPTER_MAX_ROUNDS to prevent excessive continuation
-            speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION
-        )
 
     def _create_team_autogen2(self) -> Any:
         """Create a new team for the agents (AutoGen 2.0)"""
@@ -995,10 +924,7 @@ Wait for each step to complete before proceeding."""
         logger.warning(f"Attempting simplified retry for Chapter {chapter_number}")
 
         try:
-            if self.use_autogen2:
-                messages = self._retry_generation_autogen2(chapter_number, prompt)
-            else:
-                messages = self._retry_generation_legacy(chapter_number, prompt)
+            messages = self._retry_generation_autogen2(chapter_number, prompt)
 
             # Log what we got for debugging
             logger.debug(f"Retry produced {len(messages)} messages")
@@ -1016,55 +942,6 @@ Wait for each step to complete before proceeding."""
                 "Unable to generate chapter content after retry",
                 chapter_number=chapter_number
             ) from e
-
-    def _retry_generation_legacy(self, chapter_number: int, prompt: str) -> List[Dict[str, Any]]:
-        """Retry generation using legacy AutoGen"""
-        if not AUTOGEN_LEGACY_AVAILABLE or autogen_legacy is None:
-            raise ImportError("Legacy AutoGen not available")
-
-        # Create a new group chat with just essential agents
-        available_agents = [
-            self.agents["user_proxy"],
-            self.agents["writer"]
-        ]
-
-        # Add memory_keeper if available
-        if "memory_keeper" in self.agents:
-            available_agents.insert(1, self.agents["memory_keeper"])
-
-        retry_groupchat = autogen_legacy.GroupChat(
-            agents=available_agents,
-            messages=[],
-            max_round=GroupChatConstants.REPLY_MAX_ROUNDS,
-            speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION
-        )
-
-        manager = autogen_legacy.GroupChatManager(
-            groupchat=retry_groupchat,
-            llm_config=self.agent_config
-        )
-
-        retry_prompt = f"""EMERGENCY CHAPTER GENERATION for Chapter {chapter_number}.
-
-Previous attempt failed. Generate this chapter NOW.
-
-Chapter Requirements:
-{prompt}
-
-INSTRUCTIONS:
-1. Write the complete chapter content
-2. Make it at least 3000 words
-3. Start with: "Chapter {chapter_number}: [Title]"
-4. End with: "END OF CHAPTER {chapter_number}"
-5. Just write the story - no outlines, no planning, no meta-commentary
-
-WRITE THE CHAPTER NOW."""
-
-        self.agents["user_proxy"].initiate_chat(
-            manager, message=retry_prompt
-        )
-
-        return retry_groupchat.messages
 
     def _retry_generation_autogen2(self, chapter_number: int, prompt: str) -> List[Dict[str, Any]]:
         """Retry generation using AutoGen 2.0"""

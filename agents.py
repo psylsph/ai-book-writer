@@ -6,28 +6,14 @@ AutoGen 2.0 uses an async, event-driven architecture with model clients.
 from typing import Any, Dict, List, Optional
 
 # AutoGen 2.0 imports
-try:
-    from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent
-    from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
-    from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
-    from autogen_agentchat.base import Response
-    from autogen_agentchat.messages import TextMessage
-    from autogen_ext.models.openai import OpenAIChatCompletionClient
-    AUTOGEN_2_AVAILABLE = True
-except ImportError as e:
-    AUTOGEN_2_AVAILABLE = False
-    AssistantAgent = None
-    CodeExecutorAgent = None
-    RoundRobinGroupChat = None
-    SelectorGroupChat = None
-    MaxMessageTermination = None
-    TextMentionTermination = None
-    Response = None
-    TextMessage = None
-    OpenAIChatCompletionClient = None
 
-AUTOGEN_LEGACY_AVAILABLE = False
-autogen_legacy = None
+from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent
+from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
+from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
+from autogen_agentchat.base import Response
+from autogen_agentchat.messages import TextMessage
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+AUTOGEN_2_AVAILABLE = True
 
 from constants import AgentConstants, ChapterConstants
 from utils import get_logger
@@ -65,25 +51,6 @@ class BookAgents:
         self.world_elements: Dict[str, str] = {}
         self.character_developments: Dict[str, List[str]] = {}
 
-        # Auto-detect which version to use if not specified
-        if use_autogen2 is None:
-            # Prefer AutoGen 2.0 if available
-            use_autogen2 = AUTOGEN_2_AVAILABLE
-
-        # Validate that the requested version is available
-        if use_autogen2 and not AUTOGEN_2_AVAILABLE:
-            raise ImportError(
-                "AutoGen 2.0 is not available but was requested. "
-                "Install with: pip install 'autogen-agentchat>=0.4.0' 'autogen-ext[openai]>=0.4.0'"
-            )
-
-        if not use_autogen2 and not AUTOGEN_LEGACY_AVAILABLE:
-            raise ImportError(
-                "Legacy AutoGen is not available. "
-                "Either install AutoGen 2.0 (recommended): pip install 'autogen-agentchat>=0.4.0' 'autogen-ext[openai]>=0.4.0' "
-                "or install legacy AutoGen: pip install pyautogen"
-            )
-
         self.use_autogen2 = use_autogen2
         logger.debug(f"BookAgents initialized (AutoGen 2.0: {self.use_autogen2})")
 
@@ -96,10 +63,8 @@ class BookAgents:
 
         outline_context = self._format_outline_context()
 
-        if self.use_autogen2:
-            return self._create_autogen2_agents(outline_context, initial_prompt)
-        else:
-            return self._create_legacy_agents(outline_context, initial_prompt)
+
+        return self._create_autogen2_agents(outline_context, initial_prompt)
 
     def _create_autogen2_agents(
         self, outline_context: str, initial_prompt: Optional[str] = None
@@ -147,48 +112,6 @@ class BookAgents:
         logger.debug("Created user_proxy agent (AutoGen 2.0)")
 
         logger.info(f"Created {len(agents)} AutoGen 2.0 agents successfully")
-        return agents
-
-    def _create_legacy_agents(
-        self, outline_context: str, initial_prompt: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Create legacy AutoGen agents"""
-        if not AUTOGEN_LEGACY_AVAILABLE:
-            raise ImportError("Legacy AutoGen not available. Install with: pip install pyautogen")
-
-        agents: Dict[str, Any] = {}
-
-        # Memory Keeper: Maintains story continuity and context
-        agents["memory_keeper"] = self._create_memory_keeper_legacy(outline_context)
-        logger.debug("Created memory_keeper agent (legacy)")
-
-        # Story Planner - Focuses on high-level story structure
-        agents["story_planner"] = self._create_story_planner_legacy()
-        logger.debug("Created story_planner agent (legacy)")
-
-        # Outline Creator - Creates detailed chapter outlines
-        agents["outline_creator"] = self._create_outline_creator_legacy(
-            self.num_chapters, initial_prompt or ""
-        )
-        logger.debug("Created outline_creator agent (legacy)")
-
-        # World Builder: Creates and maintains the story setting
-        agents["world_builder"] = self._create_world_builder_legacy(outline_context)
-        logger.debug("Created world_builder agent (legacy)")
-
-        # Writer: Generates the actual prose
-        agents["writer"] = self._create_writer_legacy(outline_context)
-        logger.debug("Created writer agent (legacy)")
-
-        # Editor: Reviews and improves content
-        agents["editor"] = self._create_editor_legacy(outline_context)
-        logger.debug("Created editor agent (legacy)")
-
-        # User Proxy: Manages the interaction
-        agents["user_proxy"] = self._create_user_proxy_legacy()
-        logger.debug("Created user_proxy agent (legacy)")
-
-        logger.info(f"Created {len(agents)} legacy agents successfully")
         return agents
 
     def _get_model_client(self) -> Optional[OpenAIChatCompletionClient]:
@@ -453,220 +376,7 @@ When you receive confirmation that a chapter step is complete:
             model_client=model_client,
         )
 
-    # ===== Legacy AutoGen Agent Creation Methods =====
-
-    def _create_memory_keeper_legacy(self, outline_context: str) -> Any:
-        """Create the Memory Keeper agent (legacy AutoGen)"""
-        context = outline_context if outline_context else f"Story Premise:\n{self.initial_prompt}"
-
-        return autogen_legacy.ConversableAgent(
-            name="memory_keeper",
-            system_message=f"""You are the keeper of the story's continuity and context.
-
-Your responsibilities:
-1. Track and summarize each chapter's key events
-2. Monitor character development and relationships
-3. Maintain world-building consistency
-4. Flag any continuity issues
-
-Story Context:
-{context}
-
-CRITICAL: After providing your memory update for a chapter, you MUST STOP.
-DO NOT continue to the next chapter. Wait for the user_proxy to initiate the next chapter.
-
-Format your responses as follows:
-- Start updates with '{AgentConstants.MEMORY_UPDATE_TAG}'
-- List key events with '{AgentConstants.EVENT_TAG}'
-- List character developments with '{AgentConstants.CHARACTER_TAG}'
-- List world details with '{AgentConstants.WORLD_TAG}'
-- Flag issues with '{AgentConstants.CONTINUITY_ALERT_TAG}'""",
-            llm_config=self.agent_config,
-        )
-
-    def _create_story_planner_legacy(self) -> Any:
-        """Create the Story Planner agent (legacy AutoGen)"""
-        return autogen_legacy.ConversableAgent(
-            name="story_planner",
-            system_message=f"""You are an expert story arc planner focused on overall narrative structure.
-
-Your sole responsibility is creating the high-level story arc.
-When given an initial story premise:
-1. Identify major plot points and story beats
-2. Map character arcs and development
-3. Note major story transitions
-4. Plan narrative pacing
-
-Format your output EXACTLY as:
-{AgentConstants.STORY_ARC_TAG}
-- Major Plot Points:
-[List each major event that drives the story]
-
-- Character Arcs:
-[For each main character, describe their development path]
-
-- Story Beats:
-[List key emotional and narrative moments in sequence]
-
-- Key Transitions:
-[Describe major shifts in story direction or tone]
-
-Always provide specific, detailed content - never use placeholders.""",
-            llm_config=self.agent_config,
-        )
-
-    def _create_outline_creator_legacy(
-        self, num_chapters: int, initial_prompt: str
-    ) -> Any:
-        """Create the Outline Creator agent (legacy AutoGen)"""
-        return autogen_legacy.ConversableAgent(
-            name="outline_creator",
-            system_message=f"""Generate a detailed {num_chapters}-chapter outline.
-
-YOU MUST USE EXACTLY THIS FORMAT FOR EACH CHAPTER - NO DEVIATIONS:
-
-Chapter 1: [Title]
-Chapter Title: [Same title as above]
-Key Events:
-- [Event 1]
-- [Event 2]
-- [Event 3]
-Character Developments: [Specific character moments and changes]
-Setting: [Specific location and atmosphere]
-Tone: [Specific emotional and narrative tone]
-
-[REPEAT THIS EXACT FORMAT FOR ALL {num_chapters} CHAPTERS]
-
-Requirements:
-1. EVERY field must be present for EVERY chapter
-2. EVERY chapter must have AT LEAST 3 specific Key Events
-3. ALL chapters must be detailed - no placeholders
-4. Format must match EXACTLY - including all headings and bullet points
-
-Initial Premise:
-{initial_prompt}
-
-START WITH '{AgentConstants.OUTLINE_START_TAG}' AND END WITH '{AgentConstants.OUTLINE_END_TAG}'
-""",
-            llm_config=self.agent_config,
-        )
-
-    def _create_world_builder_legacy(self, outline_context: str) -> Any:
-        """Create the World Builder agent (legacy AutoGen)"""
-        context = outline_context if outline_context else f"Story Premise:\n{self.initial_prompt}"
-
-        return autogen_legacy.ConversableAgent(
-            name="world_builder",
-            system_message=f"""You are an expert in world-building who creates rich, consistent settings.
-
-Your role is to establish ALL settings and locations needed for the entire story.
-
-Story Context:
-{context}
-
-Your responsibilities:
-1. Review the story arc to identify every location and setting needed
-2. Create detailed descriptions for each setting, including:
-   - Physical layout and appearance
-   - Atmosphere and environmental details
-   - Important objects or features
-   - Sensory details (sights, sounds, smells)
-3. Identify recurring locations that appear multiple times
-4. Note how settings might change over time
-5. Create a cohesive world that supports the story's themes
-
-Format your response as:
-{AgentConstants.WORLD_TAG}ELEMENTS:
-
-[LOCATION NAME]:
-- Physical Description: [detailed description]
-- Atmosphere: [mood, time of day, lighting, etc.]
-- Key Features: [important objects, layout elements]
-- Sensory Details: [what characters would experience]
-
-[RECURRING ELEMENTS]:
-- List any settings that appear multiple times
-- Note any changes to settings over time
-
-[TRANSITIONS]:
-- How settings connect to each other
-- How characters move between locations""",
-            llm_config=self.agent_config,
-        )
-
-    def _create_writer_legacy(self, outline_context: str) -> Any:
-        """Create the Writer agent (legacy AutoGen)"""
-        min_words = ChapterConstants.MIN_WORD_COUNT
-        return autogen_legacy.ConversableAgent(
-            name="writer",
-            system_message=f"""You are an expert creative writer who brings scenes to life.
-
-Book Context:
-{outline_context}
-
-Your focus:
-1. Write according to the outlined plot points
-2. Maintain consistent character voices
-3. Incorporate world-building details
-4. Create engaging prose
-5. Please make sure that you write the complete scene, do not leave it incomplete
-6. Each chapter MUST be at least {min_words} words (approximately 30,000 characters). Consider this a hard requirement. If your output is shorter, continue writing until you reach this minimum length
-7. Ensure transitions are smooth and logical
-8. Do not cut off the scene, make sure it has a proper ending
-9. Add a lot of details, and describe the environment and characters where it makes sense
-
-CRITICAL: After marking your scene with '{AgentConstants.SCENE_FINAL_TAG}', you MUST STOP.
-DO NOT continue writing. DO NOT start the next chapter.
-Wait for the user_proxy to confirm the chapter is complete before proceeding.
-
-Always reference the outline and previous content.
-Mark drafts with '{AgentConstants.SCENE_TAG}' and final versions with '{AgentConstants.SCENE_FINAL_TAG}'""",
-            llm_config=self.agent_config,
-        )
-
-    def _create_editor_legacy(self, outline_context: str) -> Any:
-        """Create the Editor agent (legacy AutoGen)"""
-        min_words = ChapterConstants.MIN_WORD_COUNT
-        return autogen_legacy.ConversableAgent(
-            name="editor",
-            system_message=f"""You are an expert editor ensuring quality and consistency.
-
-Book Overview:
-{outline_context}
-
-Your focus:
-1. Check alignment with outline
-2. Verify character consistency
-3. Maintain world-building rules
-4. Improve prose quality
-5. Return complete edited chapter
-6. Never ask to start the next chapter, as the next step is finalizing this chapter
-7. Each chapter MUST be at least {min_words} words. If the content is shorter, return it to the writer for expansion. This is a hard requirement - do not approve chapters shorter than {min_words} words
-
-CRITICAL: After providing your edited scene with '{AgentConstants.EDITED_SCENE_TAG}:END', you MUST STOP.
-DO NOT continue to the next chapter. Wait for the user_proxy to confirm before proceeding.
-
-Format your responses:
-1. Start critiques with '{AgentConstants.FEEDBACK_TAG}'
-2. Provide suggestions with '{AgentConstants.SUGGEST_TAG}'
-3. Return full edited chapter with '{AgentConstants.EDITED_SCENE_TAG}:START' to '{AgentConstants.EDITED_SCENE_TAG}:END'
-
-Reference specific outline elements in your feedback.""",
-            llm_config=self.agent_config,
-        )
-
-    def _create_user_proxy_legacy(self) -> Any:
-        """Create the User Proxy agent (legacy AutoGen)"""
-        return autogen_legacy.UserProxyAgent(
-            name="user_proxy",
-            human_input_mode="TERMINATE",
-            code_execution_config={
-                "work_dir": "book_output",
-                "use_docker": False
-            }
-        )
-
-    # ===== Shared Helper Methods =====
+     # ===== Shared Helper Methods =====
 
     def _format_outline_context(self) -> str:
         """Format the book outline into a readable context"""

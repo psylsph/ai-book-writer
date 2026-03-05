@@ -8,22 +8,9 @@ import re
 from typing import Any, Dict, List, Optional
 
 # AutoGen 2.0 imports
-try:
-    from autogen_agentchat.teams import RoundRobinGroupChat
-    from autogen_agentchat.conditions import MaxMessageTermination
-    AUTOGEN_2_AVAILABLE = True
-except ImportError:
-    AUTOGEN_2_AVAILABLE = False
-    RoundRobinGroupChat = None
-    MaxMessageTermination = None
-
-# Legacy AutoGen imports
-try:
-    import autogen as autogen_legacy
-    AUTOGEN_LEGACY_AVAILABLE = True
-except ImportError:
-    AUTOGEN_LEGACY_AVAILABLE = False
-    autogen_legacy = None
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.conditions import MaxMessageTermination
+AUTOGEN_2_AVAILABLE = True
 
 from constants import (
     AgentConstants,
@@ -35,7 +22,6 @@ from exceptions import ConfigurationError, ParseError, ValidationError
 from models import Chapter, Outline
 from utils import (
     get_logger,
-    retry_with_backoff,
     verify_chapter_sequence,
 )
 
@@ -74,10 +60,7 @@ class OutlineGenerator:
         self.num_chapters = num_chapters
 
         try:
-            if self.use_autogen2:
-                chapters = self._generate_outline_autogen2(initial_prompt, num_chapters)
-            else:
-                chapters = self._generate_outline_legacy(initial_prompt, num_chapters)
+            chapters = self._generate_outline_autogen2(initial_prompt, num_chapters)
 
             if not chapters:
                 raise ParseError("Failed to extract any chapters from outline")
@@ -101,32 +84,6 @@ class OutlineGenerator:
         except Exception as e:
             logger.error(f"Failed to generate outline: {e}")
             raise
-
-    def _generate_outline_legacy(
-        self, initial_prompt: str, num_chapters: int
-    ) -> List[Dict[str, Any]]:
-        """Generate outline using legacy AutoGen (synchronous)"""
-        if not AUTOGEN_LEGACY_AVAILABLE or autogen_legacy is None:
-            raise ImportError("Legacy AutoGen not available. Install with: pip install pyautogen")
-
-        groupchat = self._create_outline_groupchat_legacy()
-        manager = autogen_legacy.GroupChatManager(
-            groupchat=groupchat, llm_config=self.agent_config
-        )
-
-        outline_prompt = self._build_outline_prompt(initial_prompt, num_chapters)
-
-        # Initiate the chat with retry logic
-        self._initiate_chat_with_retry_legacy(manager, outline_prompt)
-
-        # Extract and validate the outline
-        chapters = self._process_outline_results(groupchat.messages, num_chapters)
-
-        if not chapters:
-            logger.warning("Normal processing failed, attempting emergency processing")
-            chapters = self._emergency_outline_processing(groupchat.messages, num_chapters)
-
-        return chapters
 
     def _generate_outline_autogen2(
         self, initial_prompt: str, num_chapters: int
@@ -199,30 +156,6 @@ class OutlineGenerator:
             return msg
         else:
             return {"content": str(msg), "sender": "unknown"}
-
-    @retry_with_backoff(max_retries=3, exceptions=(Exception,))
-    def _initiate_chat_with_retry_legacy(
-        self, manager: Any, prompt: str
-    ) -> None:
-        """Initiate chat with retry logic (legacy)"""
-        self.agents["user_proxy"].initiate_chat(manager, message=prompt)
-
-    def _create_outline_groupchat_legacy(self) -> Any:
-        """Create a configured group chat for outline generation (legacy)"""
-        if autogen_legacy is None:
-            raise ImportError("Legacy AutoGen not available")
-
-        return autogen_legacy.GroupChat(
-            agents=[
-                self.agents["user_proxy"],
-                self.agents["story_planner"],
-                self.agents["world_builder"],
-                self.agents["outline_creator"],
-            ],
-            messages=[],
-            max_round=GroupChatConstants.OUTLINE_MAX_ROUNDS,
-            speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION,
-        )
 
     def _create_outline_team_autogen2(self) -> Any:
         """Create a configured team for outline generation (AutoGen 2.0)"""

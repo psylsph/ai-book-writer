@@ -9,26 +9,11 @@ Key migration changes:
 from typing import Any, Dict, List, Optional
 
 # AutoGen 2.0 imports
-try:
-    from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
-    from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
-    from autogen_agentchat.agents import AssistantAgent
-    AUTOGEN_2_AVAILABLE = True
-except ImportError:
-    AUTOGEN_2_AVAILABLE = False
-    RoundRobinGroupChat = None
-    SelectorGroupChat = None
-    MaxMessageTermination = None
-    TextMentionTermination = None
-    AssistantAgent = None
+from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
+from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
+from autogen_agentchat.agents import AssistantAgent
+AUTOGEN_2_AVAILABLE = True
 
-# Legacy AutoGen imports
-try:
-    import autogen as autogen_legacy
-    AUTOGEN_LEGACY_AVAILABLE = True
-except ImportError:
-    AUTOGEN_LEGACY_AVAILABLE = False
-    autogen_legacy = None
 
 from constants import GroupChatConstants
 from utils import get_logger
@@ -77,10 +62,7 @@ class TeamFactory:
         if len(available_agents) < len(required_agents):
             logger.error(f"Missing required agents for outline chat. Have {len(available_agents)}, need {len(required_agents)}")
 
-        if use_autogen2 and AUTOGEN_2_AVAILABLE:
-            return TeamFactory._create_outline_team_autogen2(available_agents, max_rounds)
-        else:
-            return TeamFactory._create_outline_groupchat_legacy(available_agents, max_rounds)
+        return TeamFactory._create_outline_team_autogen2(available_agents, max_rounds)
 
     @staticmethod
     def _create_outline_team_autogen2(agents: List[Any], max_rounds: int) -> Any:
@@ -102,19 +84,6 @@ class TeamFactory:
         return team
 
     @staticmethod
-    def _create_outline_groupchat_legacy(agents: List[Any], max_rounds: int) -> Any:
-        """Create a GroupChat for outline generation (legacy AutoGen)"""
-        if not AUTOGEN_LEGACY_AVAILABLE:
-            raise ImportError("Legacy AutoGen not available. Install with: pip install pyautogen")
-
-        return autogen_legacy.GroupChat(
-            agents=agents,
-            messages=[],
-            max_round=max_rounds,
-            speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION,
-        )
-
-    @staticmethod
     def create_chapter_team(
         agents: Dict[str, Any],
         agent_config: Dict[str, Any],
@@ -125,10 +94,7 @@ class TeamFactory:
         """Create a team/group chat for chapter generation"""
         logger.debug(f"Creating chapter team with max_rounds={max_rounds}, AutoGen 2.0: {use_autogen2}")
 
-        if use_autogen2 and AUTOGEN_2_AVAILABLE:
-            return TeamFactory._create_chapter_team_autogen2(agents, outline_context, max_rounds)
-        else:
-            return TeamFactory._create_chapter_groupchat_legacy(agents, agent_config, outline_context, max_rounds)
+        return TeamFactory._create_chapter_team_autogen2(agents, outline_context, max_rounds)
 
     @staticmethod
     def _create_chapter_team_autogen2(
@@ -179,41 +145,6 @@ class TeamFactory:
 
         return team
 
-    @staticmethod
-    def _create_chapter_groupchat_legacy(
-        agents: Dict[str, Any],
-        agent_config: Dict[str, Any],
-        outline_context: str,
-        max_rounds: int,
-    ) -> Any:
-        """Create a GroupChat for chapter generation (legacy AutoGen)"""
-        if not AUTOGEN_LEGACY_AVAILABLE:
-            raise ImportError("Legacy AutoGen not available. Install with: pip install pyautogen")
-
-        messages = [{
-            "role": "system",
-            "content": f"Complete Book Outline:\n{outline_context}"
-        }]
-
-        # Create a copy of the writer agent for final output
-        writer_final = autogen_legacy.ConversableAgent(
-            name="writer_final",
-            system_message=agents["writer"].system_message,
-            llm_config=agent_config
-        )
-
-        return autogen_legacy.GroupChat(
-            agents=[
-                agents["user_proxy"],
-                agents["memory_keeper"],
-                agents["writer"],
-                agents["editor"],
-                writer_final
-            ],
-            messages=messages,
-            max_round=max_rounds,
-            speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION
-        )
 
     @staticmethod
     def create_retry_team(
@@ -224,10 +155,7 @@ class TeamFactory:
         """Create a minimal team/group chat for emergency retry"""
         logger.debug(f"Creating retry team with max_rounds={max_rounds}, AutoGen 2.0: {use_autogen2}")
 
-        if use_autogen2 and AUTOGEN_2_AVAILABLE:
-            return TeamFactory._create_retry_team_autogen2(agents, max_rounds)
-        else:
-            return TeamFactory._create_retry_groupchat_legacy(agents, max_rounds)
+        return TeamFactory._create_retry_team_autogen2(agents, max_rounds)
 
     @staticmethod
     def _create_retry_team_autogen2(agents: Dict[str, Any], max_rounds: int) -> Any:
@@ -260,23 +188,6 @@ class TeamFactory:
         )
 
         return team
-
-    @staticmethod
-    def _create_retry_groupchat_legacy(agents: Dict[str, Any], max_rounds: int) -> Any:
-        """Create a minimal GroupChat for emergency retry (legacy AutoGen)"""
-        if not AUTOGEN_LEGACY_AVAILABLE:
-            raise ImportError("Legacy AutoGen not available. Install with: pip install pyautogen")
-
-        return autogen_legacy.GroupChat(
-            agents=[
-                agents["user_proxy"],
-                agents["story_planner"],
-                agents["writer"]
-            ],
-            messages=[],
-            max_round=max_rounds,
-            speaker_selection_method="round_robin"
-        )
 
 
 class ChatManager(AgentManager):
