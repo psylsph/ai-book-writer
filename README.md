@@ -213,7 +213,7 @@ After successful completion, you'll have:
 ```
 book_output/
 ├── outline.txt              # The complete book outline
-├── chapter_01.txt           # ~5000+ words each
+├── chapter_01.txt           # ~3000+ words each
 ├── chapter_02.txt
 ├── chapter_03.txt
 ├── ...
@@ -277,7 +277,7 @@ AZURE_BASE_URL=https://your-resource.openai.azure.com
 
 # Book Generation Settings
 BOOK_NUM_CHAPTERS=25
-BOOK_MIN_WORDS=5000
+BOOK_MIN_WORDS=3000
 BOOK_OUTPUT_DIR=book_output
 
 # Logging
@@ -381,7 +381,7 @@ book_output/
 Chapter files include:
 - Chapter number in header
 - Full chapter content
-- Word count validation (minimum 5000 words by default)
+- Word count validation (minimum 3000 words by default)
 
 ## Error Handling
 

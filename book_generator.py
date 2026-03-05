@@ -586,7 +586,7 @@ Chapter Requirements:
 
 INSTRUCTIONS:
 1. Write the complete chapter content
-2. Make it at least 5000 words
+2. Make it at least 3000 words
 3. Start with: "Chapter {chapter_number}: [Title]"
 4. End with: "END OF CHAPTER {chapter_number}"
 5. Just write the story - no outlines, no planning, no meta-commentary

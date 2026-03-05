@@ -9,7 +9,7 @@ class ConfigConstants:
     DEFAULT_API_KEY = "not-needed"
     DEFAULT_SEED = 42
     DEFAULT_TEMPERATURE = 0.7
-    DEFAULT_TIMEOUT = 600  # seconds
+    DEFAULT_TIMEOUT = 1800  # 30 minutes - local LLMs can be slow for long content
 
 
 class FileConstants:
@@ -23,7 +23,7 @@ class FileConstants:
 
 class ChapterConstants:
     """Chapter generation constants"""
-    MIN_WORD_COUNT = 5000
+    MIN_WORD_COUNT = 3000
     MIN_CONTENT_LENGTH = 100
     MIN_CONTENT_LINES = 3
     DEFAULT_NUM_CHAPTERS = 25

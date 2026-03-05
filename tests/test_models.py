@@ -91,9 +91,9 @@ class TestChapterContent:
         content = ChapterContent(
             chapter_number=1,
             title="Test",
-            content="word " * 5000
+            content="word " * 3000
         )
-        assert content.validate_length(min_words=5000) is True
+        assert content.validate_length(min_words=3000) is True
 
     def test_validate_length_too_short(self):
         content = ChapterContent(
@@ -101,7 +101,7 @@ class TestChapterContent:
             title="Test",
             content="Too short"
         )
-        assert content.validate_length(min_words=5000) is False
+        assert content.validate_length(min_words=3000) is False
 
 
 class TestWorldElement:

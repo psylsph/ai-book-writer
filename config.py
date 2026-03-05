@@ -77,6 +77,11 @@ class AppConfig:
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = None
     
+    # OpenAI Creative settings (for writer agent - can use different provider)
+    openai_creative_api_key: Optional[str] = None
+    openai_creative_model: Optional[str] = None
+    openai_creative_base_url: Optional[str] = None
+    
     # Azure settings (from environment)
     azure_deployment: Optional[str] = None
     azure_api_key: Optional[str] = None
@@ -88,7 +93,7 @@ class AppConfig:
     
     # Generation settings
     default_num_chapters: int = 25
-    min_word_count: int = 5000
+    min_word_count: int = 3000
     max_retries: int = 3
     
     # Logging settings
@@ -114,6 +119,11 @@ class AppConfig:
         
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_base_url = os.getenv("OPENAI_BASE_URL")
+        
+        # OpenAI Creative settings (for writer agent)
+        self.openai_creative_api_key = os.getenv("OPENAI_CREATIVE_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.openai_creative_model = os.getenv("OPENAI_CREATIVE_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4"
+        self.openai_creative_base_url = os.getenv("OPENAI_CREATIVE_BASE_URL") or os.getenv("OPENAI_BASE_URL")
         
         # Azure settings
         self.azure_deployment = os.getenv("AZURE_DEPLOYMENT")
@@ -240,10 +250,25 @@ class AppConfig:
                 item["price"] = price_list
             return item
         
-        if self.provider == "local":
-            if is_creative_role and self.local_creative_model:
-                # Use creative model with creative temperature
-                logger.info(f"Role '{role}' using creative model: {self.local_creative_model}")
+        if is_creative_role:
+            # Check if we have remote creative configuration
+            if self.openai_creative_api_key:
+                # Use remote API for creative tasks
+                logger.info(f"Role '{role}' using remote creative model: {self.openai_creative_model}")
+                return AgentConfig(
+                    seed=ConfigConstants.DEFAULT_SEED,
+                    temperature=self.local_creative_temperature,
+                    timeout=ConfigConstants.DEFAULT_TIMEOUT,
+                    cache_seed=cache_seed_value,
+                    config_list=[build_config_item(
+                        self.openai_creative_model,
+                        self.openai_creative_base_url or "https://api.openai.com/v1",
+                        self.openai_creative_api_key
+                    )]
+                )
+            elif self.provider == "local" and self.local_creative_model:
+                # Use local creative model
+                logger.info(f"Role '{role}' using local creative model: {self.local_creative_model}")
                 return AgentConfig(
                     seed=ConfigConstants.DEFAULT_SEED,
                     temperature=self.local_creative_temperature,
@@ -255,9 +280,11 @@ class AppConfig:
                         self.local_api_key
                     )]
                 )
-            elif is_planning_role and self.local_planning_model:
-                # Use planning/review model with planning temperature
-                logger.info(f"Role '{role}' using planning model: {self.local_planning_model}")
+        
+        if is_planning_role:
+            if self.provider == "local" and self.local_planning_model:
+                # Use local planning/review model
+                logger.info(f"Role '{role}' using local planning model: {self.local_planning_model}")
                 return AgentConfig(
                     seed=ConfigConstants.DEFAULT_SEED,
                     temperature=self.local_planning_temperature,
@@ -267,6 +294,20 @@ class AppConfig:
                         self.local_planning_model,
                         self.local_planning_url or self.local_url,
                         self.local_api_key
+                    )]
+                )
+            elif self.provider == "openai":
+                # Use OpenAI for planning
+                logger.info(f"Role '{role}' using OpenAI model: {self.openai_model}")
+                return AgentConfig(
+                    seed=ConfigConstants.DEFAULT_SEED,
+                    temperature=self.local_planning_temperature,
+                    timeout=ConfigConstants.DEFAULT_TIMEOUT,
+                    cache_seed=cache_seed_value,
+                    config_list=[build_config_item(
+                        self.openai_model,
+                        self.openai_base_url or "https://api.openai.com/v1",
+                        self.openai_api_key or ""
                     )]
                 )
         
@@ -384,6 +425,13 @@ OPENAI_API_KEY=your-api-key-here
 OPENAI_MODEL=gpt-4
 # OPENAI_BASE_URL=https://api.openai.com/v1  # Optional
 
+# OpenAI Creative Configuration (for writer agent - can use different endpoint)
+# This allows using remote API for creative tasks while using local for planning
+# Examples: OpenAI, OpenRouter, or any OpenAI-compatible API
+# OPENAI_CREATIVE_API_KEY=your-creative-api-key-here
+# OPENAI_CREATIVE_MODEL=gpt-4-turbo-preview
+# OPENAI_CREATIVE_BASE_URL=https://api.openai.com/v1  # Or https://openrouter.ai/api/v1
+
 # Azure Configuration (if using azure provider)
 AZURE_API_KEY=your-azure-key-here
 AZURE_DEPLOYMENT=your-deployment-name
@@ -392,7 +440,7 @@ AZURE_BASE_URL=https://your-resource.openai.azure.com
 
 # Book Generation Settings
 BOOK_NUM_CHAPTERS=25
-BOOK_MIN_WORDS=5000
+BOOK_MIN_WORDS=3000
 BOOK_OUTPUT_DIR=book_output
 
 # Logging

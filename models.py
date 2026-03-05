@@ -95,7 +95,7 @@ class ChapterContent(BaseModel):
             self.word_count = len(self.content.split())
         return self
     
-    def validate_length(self, min_words: int = 5000) -> bool:
+    def validate_length(self, min_words: int = 3000) -> bool:
         """Validate that chapter meets minimum word count"""
         return self.word_count >= min_words
 
