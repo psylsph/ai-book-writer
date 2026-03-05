@@ -19,6 +19,8 @@ class FileConstants:
     CHAPTER_PREFIX = "chapter_"
     CHAPTER_EXTENSION = ".txt"
     BACKUP_EXTENSION = ".backup"
+    DRAFTS_SUBDIR = "drafts"
+    DEFAULT_ENCODING = "utf-8"
 
 
 class ChapterConstants:
@@ -71,6 +73,8 @@ class AgentConstants:
     STORY_ARC_TAG = "STORY_ARC:"
     OUTLINE_START_TAG = "OUTLINE:"
     OUTLINE_END_TAG = "END OF OUTLINE"
+    CHAPTER_START_TAG = "CHAPTER:"
+    CHAPTER_END_TAG = "END OF CHAPTER"
 
 
 class ValidationConstants:

@@ -26,6 +26,7 @@ from utils import (
     check_sequence_completion,
     clean_chapter_content,
     count_words,
+    extract_content_between_tags,
     format_chapter_filename,
     get_logger,
     get_sender_from_message,
@@ -201,6 +202,8 @@ class BookGenerator:
     def generate_chapter(self, chapter_number: int, prompt: str) -> None:
         """Generate a single chapter with completion verification"""
         logger.info(f"Generating Chapter {chapter_number}...")
+        
+        messages: List[Dict[str, Any]] = []
 
         try:
             groupchat = self._create_group_chat()
@@ -212,37 +215,69 @@ class BookGenerator:
 
             # Start generation
             self.agents["user_proxy"].initiate_chat(manager, message=chapter_prompt)
+            messages = groupchat.messages
 
-            # Verify chapter completion
-            if not self._verify_chapter_complete(groupchat.messages, chapter_number):
-                raise ChapterIncompleteError(
-                    f"Chapter {chapter_number} generation incomplete",
-                    chapter_number=chapter_number,
-                    missing_steps=self._get_missing_steps(groupchat.messages)
+            # Check completion status
+            sequence_complete = check_sequence_completion(messages)
+            missing_steps = [step for step, complete in sequence_complete.items() if not complete]
+            
+            if missing_steps:
+                logger.warning(
+                    f"Chapter {chapter_number} has incomplete steps: {missing_steps}. "
+                    f"Attempting to process available content..."
                 )
 
-            self._process_chapter_results(chapter_number, groupchat.messages)
+            # Always try to process results, even if incomplete
+            self._process_chapter_results(chapter_number, messages)
 
+            # Check if file was created
             chapter_file = os.path.join(
                 self.output_dir, format_chapter_filename(chapter_number)
             )
+            
             if not os.path.exists(chapter_file):
+                logger.error(f"Chapter file not created: {chapter_file}")
+                # Only use emergency generation if no file was created at all
                 raise FileOperationError(
                     f"Chapter {chapter_number} file not created",
                     filepath=chapter_file,
                     operation="create"
                 )
 
+            # Verify the saved content
+            if not self._verify_chapter_file(chapter_number):
+                logger.error(f"Chapter {chapter_number} file verification failed")
+                raise ChapterError(
+                    f"Chapter {chapter_number} verification failed",
+                    chapter_number=chapter_number
+                )
+
             completion_msg = f"Chapter {chapter_number} is complete. Proceed with next chapter."
             self.agents["user_proxy"].send(completion_msg, manager)
+            
+            logger.info(f"✓ Chapter {chapter_number} generated successfully")
 
         except RetryExhaustedError:
             logger.error(f"All retry attempts exhausted for chapter {chapter_number}")
             raise
-        except Exception as e:
-            logger.error(f"Error in chapter {chapter_number}: {e}")
-            self._save_checkpoint(chapter_number, "error", {"error": str(e), "messages": messages if 'messages' in locals() else []})
+        except (FileOperationError, ChapterError) as e:
+            # These errors mean we should try emergency generation
+            logger.error(f"Critical error in chapter {chapter_number}: {e}")
+            self._save_checkpoint(chapter_number, "critical_error", {"error": str(e), "messages": messages})
             self._handle_chapter_generation_failure(chapter_number, prompt)
+        except Exception as e:
+            # Log unexpected errors but don't necessarily trigger emergency mode
+            logger.error(f"Unexpected error in chapter {chapter_number}: {e}")
+            self._save_checkpoint(chapter_number, "unexpected_error", {"error": str(e), "messages": messages})
+            # Check if we have a file before deciding to use emergency generation
+            chapter_file = os.path.join(
+                self.output_dir, format_chapter_filename(chapter_number)
+            )
+            if not os.path.exists(chapter_file):
+                logger.warning("No chapter file exists, attempting emergency generation...")
+                self._handle_chapter_generation_failure(chapter_number, prompt)
+            else:
+                logger.info("Chapter file exists despite error, continuing...")
 
     def _create_group_chat(self) -> autogen.GroupChat:
         """Create a new group chat for the agents"""
@@ -342,6 +377,97 @@ Wait for each step to complete before proceeding."""
         ]
         return "\n".join(context_parts)
 
+    def _save_intermediate_drafts(
+        self, chapter_number: int, messages: List[Dict[str, Any]]
+    ) -> None:
+        """
+        Extract and save intermediate drafts from conversation messages.
+        
+        Saves drafts at different stages:
+        - Initial writer drafts (scene tags)
+        - Editor feedback versions
+        - Final polished versions
+        
+        Args:
+            chapter_number: The chapter number being processed
+            messages: List of conversation messages
+        """
+        import json
+        from pathlib import Path
+        
+        logger.debug(f"Extracting intermediate drafts for chapter {chapter_number}")
+        
+        # Create drafts directory
+        drafts_dir = Path(self.output_dir) / FileConstants.DRAFTS_SUBDIR
+        drafts_dir.mkdir(parents=True, exist_ok=True)
+        
+        draft_count = 0
+        for msg_idx, msg in enumerate(messages):
+            content = msg.get("content", "")
+            if not content:
+                continue
+            
+            # Extract content from various tags
+            draft_content = None
+            draft_type = None
+            
+            # Look for scene content (initial draft)
+            if AgentConstants.SCENE_TAG in content:
+                draft_content = extract_content_between_tags(
+                    content, 
+                    AgentConstants.SCENE_TAG,
+                    AgentConstants.CHAPTER_END_TAG
+                )
+                draft_type = "writer_draft"
+                sender = get_sender_from_message(msg)
+                if "editor" in sender.lower():
+                    draft_type = "editor_revision"
+            
+            # Look for final scene content
+            elif AgentConstants.SCENE_FINAL_TAG in content:
+                draft_content = extract_content_between_tags(
+                    content,
+                    AgentConstants.SCENE_FINAL_TAG,
+                    AgentConstants.CHAPTER_END_TAG
+                )
+                draft_type = "final_draft"
+            
+            # Look for content in chapter tags
+            elif AgentConstants.CHAPTER_START_TAG in content:
+                draft_content = extract_content_between_tags(
+                    content,
+                    AgentConstants.CHAPTER_START_TAG,
+                    AgentConstants.CHAPTER_END_TAG
+                )
+                draft_type = "tagged_content"
+            
+            # Save draft if content found and substantial
+            if draft_content and len(draft_content.strip()) > 100:
+                draft_count += 1
+                draft_filename = f"chapter_{chapter_number:02d}_draft_{draft_count:02d}_{draft_type}.md"
+                draft_path = drafts_dir / draft_filename
+                
+                try:
+                    with open(draft_path, 'w', encoding=FileConstants.DEFAULT_ENCODING) as f:
+                        f.write(f"<!-- Draft {draft_count} - {draft_type} -->")
+                        f.write(f"<!-- Message index: {msg_idx} -->")
+                        f.write(f"<!-- Sender: {get_sender_from_message(msg)} -->\n\n")
+                        f.write(draft_content.strip())
+                    
+                    word_count = count_words(draft_content)
+                    logger.info(
+                        f"Saved {draft_type} for chapter {chapter_number} "
+                        f"({word_count} words) to {draft_filename}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to save draft {draft_count} for chapter {chapter_number}: {e}")
+        
+        if draft_count > 0:
+            logger.info(f"Saved {draft_count} intermediate drafts for chapter {chapter_number}")
+        else:
+            logger.warning(f"No intermediate drafts found for chapter {chapter_number}")
+
+
     def _save_conversation_log(self, chapter_number: int, messages: List[Dict[str, Any]]) -> None:
         """Save conversation log for debugging"""
         import json
@@ -413,6 +539,9 @@ Wait for each step to complete before proceeding."""
         
         # Save conversation log for debugging
         self._save_conversation_log(chapter_number, messages)
+        
+        # Extract and save intermediate drafts
+        self._save_intermediate_drafts(chapter_number, messages)
 
         # Extract Memory Keeper's summary
         memory_update = None
@@ -465,8 +594,17 @@ Wait for each step to complete before proceeding."""
         # Validate content length
         word_count = count_words(chapter_content)
         if word_count < ChapterConstants.MIN_WORD_COUNT:
+            suggestion = (
+                f"Chapter {chapter_number} is too short ({word_count} words, minimum {ChapterConstants.MIN_WORD_COUNT}). "
+                f"Suggestions:\n"
+                f"1. Check LLM output - it may have timed out or produced incomplete content\n"
+                f"2. Increase timeout in constants.py (currently {ConfigConstants.DEFAULT_TIMEOUT}s)\n"
+                f"3. Reduce BOOK_MIN_WORDS in .env if your LLM cannot generate this much content\n"
+                f"4. Check conversation logs in book_output/conversation_logs/\n"
+                f"5. Try using a more capable model for creative tasks"
+            )
             raise ChapterTooShortError(
-                f"Chapter {chapter_number} too short",
+                suggestion,
                 chapter_number=chapter_number,
                 word_count=word_count,
                 min_words=ChapterConstants.MIN_WORD_COUNT
@@ -550,7 +688,26 @@ Wait for each step to complete before proceeding."""
     def _handle_chapter_generation_failure(
         self, chapter_number: int, prompt: str
     ) -> None:
-        """Handle failed chapter generation with simplified retry"""
+        """Handle failed chapter generation with simplified retry.
+        
+        This method is called when the standard multi-agent chapter generation
+        process fails. It creates a minimal agent group (user_proxy + writer)
+        and attempts to generate the chapter with a simplified, more direct prompt.
+        
+        Args:
+            chapter_number: The chapter number that failed to generate
+            prompt: The original chapter requirements/prompt
+            
+        Raises:
+            ChapterError: If the retry attempt also fails
+            
+        Example:
+            If chapter 5 fails during normal generation, this will:
+            1. Create a simplified retry group chat
+            2. Send an emergency prompt to the writer agent
+            3. Attempt to extract and save the generated content
+            4. Raise ChapterError if retry also fails
+        """
         logger.warning(f"Attempting simplified retry for Chapter {chapter_number}")
 
         try:
@@ -615,7 +772,29 @@ WRITE THE CHAPTER NOW."""
             ) from e
 
     def get_book_stats(self) -> Dict[str, Any]:
-        """Get statistics for the generated book"""
+        """Get comprehensive statistics for the generated book.
+        
+        Scans the output directory and analyzes all generated chapters,
+        calculating total word count, chapter count, and per-chapter statistics.
+        
+        Returns:
+            Dictionary containing:
+            - total_chapters: Number of chapters found
+            - total_words: Total word count across all chapters
+            - chapters: List of chapter statistics including:
+              - chapter: Chapter number
+              - filename: Chapter filename
+              - words: Word count for this chapter
+              
+        Example:
+            >>> stats = generator.get_book_stats()
+            >>> print(f"Book has {stats['total_chapters']} chapters")
+            >>> print(f"Total words: {stats['total_words']:,}")
+            
+        Note:
+            Skips files that cannot be read and logs warnings for them.
+            Only processes files matching the chapter filename pattern.
+        """
         stats = {
             "total_chapters": 0,
             "total_words": 0,

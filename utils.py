@@ -1,13 +1,19 @@
 """Utility functions for the book generation system"""
 import functools
 import logging
+import os
 import random
 import re
+import shutil
 import time
+from contextlib import contextmanager
+from io import StringIO
+from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar
 
 from exceptions import (
     ChapterTooShortError,
+    FileOperationError,
     RetryExhaustedError,
 )
 from constants import AgentConstants, ChapterConstants, LoggingConstants, RegexPatterns, RetryConstants
