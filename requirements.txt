@@ -1,8 +1,18 @@
 # Core dependencies
-autogen>=0.2.0
+# AutoGen 2.0 - New architecture with teams and model clients
+autogen-agentchat>=0.4.0  # Core agent and team APIs
+autogen-ext[openai]>=0.4.0  # Extensions for OpenAI, Azure, etc.
+
+# Optional: Legacy AutoGen 0.2 for backward compatibility
+# Install with: pip install pyautogen (if you need legacy mode)
+# pyautogen>=0.2.0  # Uncomment if you need to use legacy AutoGen
+
+# Data validation and configuration
 pydantic>=2.0.0
 python-dotenv>=1.0.0
-ag2[openai]
+
+# Optional dependencies
+tqdm>=4.65.0  # For progress bars
 
 # Development dependencies
 pytest>=7.0.0  # For testing
@@ -10,6 +20,3 @@ pytest-asyncio>=0.21.0  # For async test support
 black>=22.0.0  # For code formatting
 flake8>=4.0.0  # For linting
 mypy>=0.910  # For type checking
-
-# Optional dependencies
-tqdm>=4.65.0  # For progress bars

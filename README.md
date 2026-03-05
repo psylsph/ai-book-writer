@@ -38,6 +38,8 @@ This codebase has been significantly improved with the following enhancements:
 
 ## Features
 
+- **AutoGen 2.0 Support** - Full support for AutoGen 2.0 (autogen-agentchat) with async execution
+- **Backward Compatibility** - Falls back to AutoGen 0.2 (pyautogen) when needed
 - Multi-agent collaborative writing system
 - Structured chapter generation with consistent formatting
 - Maintains story continuity and character development
@@ -74,8 +76,17 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
 3. Install dependencies:
+
+**For AutoGen 2.0 (recommended):**
 ```bash
 pip install -r requirements.txt
+# This installs: autogen-agentchat>=0.4.0 and autogen-ext[openai]>=0.4.0
+```
+
+**For legacy AutoGen 0.2:**
+```bash
+pip install pyautogen>=0.2.0
+pip install -r requirements.txt  # Install other dependencies
 ```
 
 4. Create environment configuration (optional):
@@ -160,6 +171,12 @@ python main.py --prompt story.md --log-level DEBUG
 
 # Combine options
 python main.py -p story.md -c 15 --provider local -o ./output
+
+# Force AutoGen 2.0 mode (requires AutoGen 2.0 packages)
+python main.py --autogen2
+
+# Force legacy AutoGen mode
+python main.py --legacy-autogen
 
 # Show all available options
 python main.py --help
@@ -412,7 +429,8 @@ The system automatically retries failed operations with exponential backoff:
 ## Requirements
 
 - Python 3.8+
-- autogen>=0.2.0
+- **AutoGen 2.0 (recommended)**: `autogen-agentchat>=0.4.0` and `autogen-ext[openai]>=0.4.0`
+- **Or AutoGen 0.2 (legacy)**: `pyautogen>=0.2.0`
 - pydantic>=2.0.0
 - python-dotenv>=1.0.0
 - Other dependencies in requirements.txt

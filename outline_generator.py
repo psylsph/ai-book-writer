@@ -1,13 +1,32 @@
-"""Generate book outlines using AutoGen agents with improved error handling and validation"""
+"""Generate book outlines using AutoGen agents with improved error handling and validation
+
+Supports both legacy AutoGen 0.2 and AutoGen 2.0 (0.4+) APIs.
+AutoGen 2.0 uses async team execution with termination conditions.
+"""
+import asyncio
 import re
 from typing import Any, Dict, List, Optional
 
-import autogen
+# AutoGen 2.0 imports
+try:
+    from autogen_agentchat.teams import RoundRobinGroupChat
+    from autogen_agentchat.conditions import MaxMessageTermination
+    AUTOGEN_2_AVAILABLE = True
+except ImportError:
+    AUTOGEN_2_AVAILABLE = False
+    RoundRobinGroupChat = None
+    MaxMessageTermination = None
+
+# Legacy AutoGen imports
+try:
+    import autogen as autogen_legacy
+    AUTOGEN_LEGACY_AVAILABLE = True
+except ImportError:
+    AUTOGEN_LEGACY_AVAILABLE = False
+    autogen_legacy = None
 
 from constants import (
     AgentConstants,
-    ChapterConstants,
-    FileConstants,
     GroupChatConstants,
     OutlineConstants,
     RegexPatterns,
@@ -15,36 +34,38 @@ from constants import (
 from exceptions import ConfigurationError, ParseError, ValidationError
 from models import Chapter, Outline
 from utils import (
-    check_sequence_completion,
     get_logger,
-    get_sender_from_message,
     retry_with_backoff,
     verify_chapter_sequence,
 )
-
 
 logger = get_logger("outline_generator")
 
 
 class OutlineGenerator:
-    """Generates comprehensive book outlines using multi-agent collaboration"""
+    """Generates comprehensive book outlines using multi-agent collaboration
+
+    Supports both legacy AutoGen 0.2 (synchronous) and AutoGen 2.0 (async) APIs.
+    """
 
     def __init__(
         self,
-        agents: Dict[str, autogen.ConversableAgent],
+        agents: Dict[str, Any],
         agent_config: Dict[str, Any],
+        use_autogen2: bool = True,
     ):
         self.agents = agents
         self.agent_config = agent_config
+        self.use_autogen2 = use_autogen2 and AUTOGEN_2_AVAILABLE
         self.num_chapters = OutlineConstants.DEFAULT_NUM_CHAPTERS
-        logger.info("OutlineGenerator initialized")
+        logger.info(f"OutlineGenerator initialized (AutoGen 2.0: {self.use_autogen2})")
 
     def generate_outline(
         self, initial_prompt: str, num_chapters: int = 25
     ) -> List[Dict[str, Any]]:
         """Generate a book outline based on initial prompt with validation"""
         logger.info(f"Generating outline with {num_chapters} chapters")
-        
+
         if num_chapters < 1:
             raise ConfigurationError("Number of chapters must be at least 1")
         if num_chapters > 100:
@@ -53,31 +74,18 @@ class OutlineGenerator:
         self.num_chapters = num_chapters
 
         try:
-            groupchat = self._create_outline_groupchat()
-            manager = autogen.GroupChatManager(
-                groupchat=groupchat, llm_config=self.agent_config
-            )
+            if self.use_autogen2:
+                chapters = self._generate_outline_autogen2(initial_prompt, num_chapters)
+            else:
+                chapters = self._generate_outline_legacy(initial_prompt, num_chapters)
 
-            outline_prompt = self._build_outline_prompt(initial_prompt, num_chapters)
-
-            # Initiate the chat with retry logic
-            self._initiate_chat_with_retry(manager, outline_prompt)
-
-            # Extract and validate the outline
-            chapters = self._process_outline_results(groupchat.messages, num_chapters)
-            
-            if not chapters:
-                logger.warning("Normal processing failed, attempting emergency processing")
-                chapters = self._emergency_outline_processing(groupchat.messages, num_chapters)
-
-            # Validate final outline
             if not chapters:
                 raise ParseError("Failed to extract any chapters from outline")
 
             # Sort and verify sequence
             chapters.sort(key=lambda x: x["chapter_number"])
             is_valid, missing = verify_chapter_sequence(chapters, num_chapters)
-            
+
             if not is_valid:
                 if missing:
                     logger.warning(f"Missing chapters: {missing}")
@@ -94,16 +102,117 @@ class OutlineGenerator:
             logger.error(f"Failed to generate outline: {e}")
             raise
 
+    def _generate_outline_legacy(
+        self, initial_prompt: str, num_chapters: int
+    ) -> List[Dict[str, Any]]:
+        """Generate outline using legacy AutoGen (synchronous)"""
+        if not AUTOGEN_LEGACY_AVAILABLE or autogen_legacy is None:
+            raise ImportError("Legacy AutoGen not available. Install with: pip install pyautogen")
+
+        groupchat = self._create_outline_groupchat_legacy()
+        manager = autogen_legacy.GroupChatManager(
+            groupchat=groupchat, llm_config=self.agent_config
+        )
+
+        outline_prompt = self._build_outline_prompt(initial_prompt, num_chapters)
+
+        # Initiate the chat with retry logic
+        self._initiate_chat_with_retry_legacy(manager, outline_prompt)
+
+        # Extract and validate the outline
+        chapters = self._process_outline_results(groupchat.messages, num_chapters)
+
+        if not chapters:
+            logger.warning("Normal processing failed, attempting emergency processing")
+            chapters = self._emergency_outline_processing(groupchat.messages, num_chapters)
+
+        return chapters
+
+    def _generate_outline_autogen2(
+        self, initial_prompt: str, num_chapters: int
+    ) -> List[Dict[str, Any]]:
+        """Generate outline using AutoGen 2.0 (async)"""
+        if not AUTOGEN_2_AVAILABLE:
+            raise ImportError(
+                "AutoGen 2.0 is not available. "
+                "Install with: pip install 'autogen-agentchat>=0.4.0' 'autogen-ext[openai]>=0.4.0'"
+            )
+
+        team = self._create_outline_team_autogen2()
+
+        outline_prompt = self._build_outline_prompt(initial_prompt, num_chapters)
+
+        # Run the team async
+        try:
+            result = asyncio.run(self._run_team_async(team, outline_prompt))
+            messages = self._extract_messages_from_result(result)
+        except Exception as e:
+            logger.error(f"AutoGen 2.0 team execution failed: {e}")
+            # Fallback to emergency processing
+            messages = []
+
+        # Process results
+        if messages:
+            chapters = self._process_outline_results(messages, num_chapters)
+        else:
+            chapters = []
+
+        if not chapters:
+            logger.warning("AutoGen 2.0 processing failed, attempting emergency processing")
+            chapters = self._emergency_outline_processing(messages, num_chapters)
+
+        return chapters
+
+    async def _run_team_async(self, team: Any, message: str) -> Any:
+        """Run the AutoGen 2.0 team asynchronously"""
+        # AutoGen 2.0 teams are run via run() method
+        # Run the team with the message
+        result = await team.run(task=message)
+        return result
+
+    def _extract_messages_from_result(self, result: Any) -> List[Dict[str, Any]]:
+        """Extract messages from AutoGen 2.0 team result"""
+        # AutoGen 2.0 results have a different structure
+        messages = []
+
+        if hasattr(result, "messages"):
+            # Result has messages attribute
+            for msg in result.messages:
+                messages.append(self._convert_autogen2_message(msg))
+        elif isinstance(result, list):
+            # Result is a list of messages
+            for msg in result:
+                messages.append(self._convert_autogen2_message(msg))
+        else:
+            # Unknown format, try to extract content
+            logger.warning(f"Unknown result format: {type(result)}")
+
+        return messages
+
+    def _convert_autogen2_message(self, msg: Any) -> Dict[str, Any]:
+        """Convert AutoGen 2.0 message to legacy format"""
+        if hasattr(msg, "content"):
+            content = msg.content
+            source = getattr(msg, "source", getattr(msg, "sender", "unknown"))
+            return {"content": content, "sender": source}
+        elif isinstance(msg, dict):
+            return msg
+        else:
+            return {"content": str(msg), "sender": "unknown"}
+
     @retry_with_backoff(max_retries=3, exceptions=(Exception,))
-    def _initiate_chat_with_retry(
-        self, manager: autogen.GroupChatManager, prompt: str
+    def _initiate_chat_with_retry_legacy(
+        self, manager: Any, prompt: str
     ) -> None:
-        """Initiate chat with retry logic"""
+        """Initiate chat with retry logic (legacy)"""
         self.agents["user_proxy"].initiate_chat(manager, message=prompt)
 
-    def _create_outline_groupchat(self) -> autogen.GroupChat:
-        """Create a configured group chat for outline generation"""
-        return autogen.GroupChat(
+    def _create_outline_groupchat_legacy(self) -> Any:
+        """Create a configured group chat for outline generation (legacy)"""
+        if autogen_legacy is None:
+            raise ImportError("Legacy AutoGen not available")
+
+        return autogen_legacy.GroupChat(
             agents=[
                 self.agents["user_proxy"],
                 self.agents["story_planner"],
@@ -113,6 +222,28 @@ class OutlineGenerator:
             messages=[],
             max_round=GroupChatConstants.OUTLINE_MAX_ROUNDS,
             speaker_selection_method=GroupChatConstants.SPEAKER_SELECTION,
+        )
+
+    def _create_outline_team_autogen2(self) -> Any:
+        """Create a configured team for outline generation (AutoGen 2.0)"""
+        if RoundRobinGroupChat is None or MaxMessageTermination is None:
+            raise ImportError("AutoGen 2.0 is not available")
+
+        participants = [
+            self.agents.get("user_proxy"),
+            self.agents.get("story_planner"),
+            self.agents.get("world_builder"),
+            self.agents.get("outline_creator"),
+        ]
+
+        # Filter out None values
+        participants = [p for p in participants if p is not None]
+
+        termination = MaxMessageTermination(GroupChatConstants.OUTLINE_MAX_ROUNDS)
+
+        return RoundRobinGroupChat(
+            participants=participants,
+            termination_condition=termination,
         )
 
     def _build_outline_prompt(self, initial_prompt: str, num_chapters: int) -> str:
@@ -150,7 +281,7 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
             return []
 
         chapters = self._parse_chapter_sections(outline_content, num_chapters)
-        
+
         if len(chapters) < num_chapters:
             logger.warning(
                 f"Only extracted {len(chapters)} chapters out of {num_chapters} required"
@@ -161,11 +292,11 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
     def _extract_outline_content(self, messages: List[Dict[str, Any]]) -> str:
         """Extract outline content from messages"""
         logger.debug(f"Searching {len(messages)} messages for outline content")
-        
+
         # Debug: Log all message senders to understand the conversation flow
         sender_counts = {}
         for msg in messages:
-            sender = msg.get("name", msg.get("role", "unknown"))
+            sender = msg.get("name", msg.get("role", msg.get("sender", "unknown")))
             sender_counts[sender] = sender_counts.get(sender, 0) + 1
         logger.debug(f"Message senders: {sender_counts}")
 
@@ -214,7 +345,7 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
             except Exception as e:
                 logger.error(f"Unexpected error processing Chapter {i}: {e}")
                 continue
-        
+
         logger.info(f"Parsed {len(chapters)} chapters from outline content")
 
         return chapters
@@ -224,7 +355,7 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
     ) -> Optional[Dict[str, Any]]:
         """Extract components from a single chapter section with lenient parsing"""
         logger.debug(f"Extracting components for chapter {chapter_num}, section length: {len(section)}")
-        
+
         # Extract required components using regex
         title_match = RegexPatterns.TITLE.search(section)
         title_alt_match = RegexPatterns.CHAPTER_TITLE_ALT.search(section)
@@ -250,44 +381,44 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
             found_components.append("Setting")
         if tone_match:
             found_components.append("Tone")
-        
+
         logger.debug(f"Chapter {chapter_num} found components: {found_components}")
 
         # If we have at least a title and some content, create a lenient chapter
         if title_match or events_match:
             # Extract events and verify count
             events_text = events_match.group(1).strip() if events_match else "Develop the story forward"
-            events = RegexPatterns.BULLET_POINT.findall(events_text)
-            
+            _ = RegexPatterns.BULLET_POINT.findall(events_text)  # Validate bullet format
+
             # Build chapter info with fallbacks for missing components
             title = title_match.group(1).strip() if title_match else f"Chapter {chapter_num}"
-            
+
             # Build prompt with whatever we have
             prompt_parts = [f"- Key Events: {events_text}"]
-            
+
             if character_match:
                 prompt_parts.append(f"- Character Developments: {character_match.group(1).strip()}")
             else:
                 prompt_parts.append("- Character Developments: Continue character arcs from previous chapters")
-            
+
             if setting_match:
                 prompt_parts.append(f"- Setting: {setting_match.group(1).strip()}")
             else:
                 prompt_parts.append("- Setting: Maintain consistent world setting")
-            
+
             if tone_match:
                 prompt_parts.append(f"- Tone: {tone_match.group(1).strip()}")
             else:
                 prompt_parts.append("- Tone: Match the established narrative tone")
 
             logger.info(f"Chapter {chapter_num}: Created with {len(found_components)} components (lenient mode)")
-            
+
             return {
                 "chapter_number": chapter_num,
                 "title": title,
                 "prompt": "\n".join(prompt_parts),
             }
-        
+
         # If we have nothing, report what was missing
         missing = []
         if not title_match:
@@ -301,7 +432,7 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
         if not tone_match:
             missing.append("Tone")
         logger.warning(f"Chapter {chapter_num} missing components: {', '.join(missing)}")
-        
+
         # Return None to skip this chapter - emergency processing will handle it
         return None
 
@@ -310,10 +441,10 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
     ) -> List[Dict[str, Any]]:
         """Emergency processing when normal outline extraction fails"""
         logger.warning("Attempting emergency outline processing")
-        
+
         # Log last few messages for debugging
         for msg in messages[-3:]:  # Last 3 messages
-            sender = msg.get("name", msg.get("role", "unknown"))
+            sender = msg.get("name", msg.get("role", msg.get("sender", "unknown")))
             content_preview = msg.get("content", "")[:500]
             logger.debug(f"Emergency processing - {sender}: {content_preview}...")
 
@@ -323,9 +454,8 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
         # Look through all messages for any chapter content
         for msg in messages:
             content = msg.get("content", "")
-            
+
             # Check for "End of Chapter X" pattern (indicates narrative content)
-            import re
             end_chapter_matches = list(re.finditer(r'\*\*End of Chapter (\d+)\*\*', content, re.IGNORECASE))
             if end_chapter_matches:
                 logger.info(f"Detected {len(end_chapter_matches)} 'End of Chapter' markers in narrative content")
@@ -338,7 +468,7 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
                         chapter_start = content.rfind(f"Chapter {chapter_num}", 0, match.start())
                         if chapter_start > 0:
                             start_pos = chapter_start
-                    
+
                     chapter_content = content[start_pos:match.start()].strip()[:200]
                     chapters.append({
                         "chapter_number": chapter_num,
@@ -351,12 +481,12 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
                             f"- Tone: Match the ongoing narrative style"
                         ),
                     })
-                
+
                 if chapters:
                     logger.info(f"Extracted {len(chapters)} chapters from narrative markers")
                     break  # We found chapters in this message
                 continue
-            
+
             # Traditional parsing for outline format
             lines = content.split("\n")
             for line in lines:
@@ -403,10 +533,10 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
                     "chapter_number": i,
                     "title": f"Chapter {i}",
                     "prompt": (
-                        f"- Key events: Develop the story forward\n"
-                        f"- Character developments: Continue character arcs\n"
-                        f"- Setting: Maintain consistent world\n"
-                        f"- Tone: Match previous chapters"
+                        "- Key events: Develop the story forward\n"
+                        "- Character developments: Continue character arcs\n"
+                        "- Setting: Maintain consistent world\n"
+                        "- Tone: Match previous chapters"
                     ),
                 })
             return chapters

@@ -1,7 +1,7 @@
 """Tests for the book generator"""
 import pytest
 from models import Chapter, Outline
-from constants import ChapterConstants, FileConstants
+from constants import ChapterConstants
 from utils import count_words, validate_chapter_length, clean_chapter_content
 
 

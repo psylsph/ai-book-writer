@@ -1,7 +1,7 @@
 """Configuration for the book generation system with environment variable support"""
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from dotenv import load_dotenv
@@ -11,6 +11,36 @@ except ImportError:
 
 from constants import ConfigConstants, LoggingConstants
 from exceptions import ConfigurationError
+
+# AutoGen 2.0 imports
+try:
+    from autogen_ext.models.openai import OpenAIChatCompletionClient
+    from autogen_core.models import ModelInfo, ModelFamily
+    from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent
+    from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
+    from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
+    from autogen_agentchat.base import Response
+    AUTOGEN_2_AVAILABLE = True
+except ImportError:
+    AUTOGEN_2_AVAILABLE = False
+    OpenAIChatCompletionClient = None
+    ModelInfo = None
+    ModelFamily = None
+    AssistantAgent = None
+    CodeExecutorAgent = None
+    RoundRobinGroupChat = None
+    SelectorGroupChat = None
+    MaxMessageTermination = None
+    TextMentionTermination = None
+    Response = None
+
+# Legacy AutoGen imports for backward compatibility during transition
+try:
+    import autogen as autogen_legacy
+    AUTOGEN_LEGACY_AVAILABLE = True
+except ImportError:
+    AUTOGEN_LEGACY_AVAILABLE = False
+    autogen_legacy = None
 
 
 @dataclass
@@ -32,15 +62,18 @@ class LLMProviderConfig:
 
 @dataclass
 class AgentConfig:
-    """Configuration for AutoGen agents"""
+    """Configuration for AutoGen agents - supports both legacy and AutoGen 2.0"""
     seed: int = ConfigConstants.DEFAULT_SEED
     temperature: float = ConfigConstants.DEFAULT_TEMPERATURE
     timeout: int = ConfigConstants.DEFAULT_TIMEOUT
     cache_seed: Optional[int] = None
     config_list: List[Dict] = field(default_factory=list)
-    
+    # AutoGen 2.0 specific fields
+    model_client: Optional[OpenAIChatCompletionClient] = None
+    model_info: Optional[ModelInfo] = None
+
     def to_dict(self) -> Dict:
-        """Convert to dictionary for AutoGen"""
+        """Convert to dictionary for legacy AutoGen"""
         return {
             "seed": self.seed,
             "temperature": self.temperature,
@@ -48,6 +81,38 @@ class AgentConfig:
             "timeout": self.timeout,
             "cache_seed": self.cache_seed
         }
+
+    def get_model_client(self) -> Optional[OpenAIChatCompletionClient]:
+        """Get the model client for AutoGen 2.0"""
+        if self.model_client:
+            return self.model_client
+
+        # Create model client from config_list if available
+        if self.config_list and AUTOGEN_2_AVAILABLE:
+            config = self.config_list[0]  # Use first config
+            return OpenAIChatCompletionClient(
+                model=config.get("model", "gpt-4"),
+                base_url=config.get("base_url"),
+                api_key=config.get("api_key", "")
+            )
+        return None
+
+    def get_model_info(self) -> Optional[ModelInfo]:
+        """Get model info for AutoGen 2.0"""
+        if self.model_info:
+            return self.model_info
+
+        if self.config_list and AUTOGEN_2_AVAILABLE and ModelInfo:
+            config = self.config_list[0]
+            # Extract pricing if available
+            price = config.get("price")
+            if price and isinstance(price, list) and len(price) == 2:
+                return ModelInfo(
+                    model=config.get("model", "gpt-4"),
+                    price_prompt=price[0],
+                    price_completion=price[1]
+                )
+        return None
 
 
 @dataclass
@@ -368,6 +433,162 @@ class AppConfig:
             raise ConfigurationError("Max retries must be non-negative")
         if self.provider not in ["local", "openai", "azure"]:
             raise ConfigurationError(f"Unknown provider: {self.provider}")
+    
+    # AutoGen 2.0 Model Client Creation Methods
+    def create_model_client(self, role: str = "default") -> OpenAIChatCompletionClient:
+        """Create an AutoGen 2.0 model client for the specified role
+
+        Args:
+            role: Agent role to determine which model configuration to use
+
+        Returns:
+            OpenAIChatCompletionClient instance configured for the role
+
+        Raises:
+            ConfigurationError: If AutoGen 2.0 is not available or configuration is invalid
+        """
+        if not AUTOGEN_2_AVAILABLE:
+            raise ConfigurationError(
+                "AutoGen 2.0 packages not available. "
+                "Install with: pip install 'autogen-agentchat>=0.4.0' 'autogen-ext[openai]>=0.4.0'"
+            )
+
+        import logging
+        logger = logging.getLogger("config")
+
+        # Get provider configuration for the role
+        provider_config = self._get_provider_config_for_role(role)
+
+        # Create and return the model client
+        try:
+            client = OpenAIChatCompletionClient(
+                model=provider_config["model"],
+                base_url=provider_config["base_url"],
+                api_key=provider_config["api_key"],
+                # Add timeout configuration
+                timeout=provider_config.get("timeout", ConfigConstants.DEFAULT_TIMEOUT),
+            )
+            logger.info(f"Created model client for role '{role}' with model: {provider_config['model']}")
+            return client
+        except Exception as e:
+            raise ConfigurationError(f"Failed to create model client for role '{role}': {e}")
+
+    def create_model_client_for_role(self, role: str) -> OpenAIChatCompletionClient:
+        """Create a model client specifically for a role with dual-model support
+
+        This is the preferred method for AutoGen 2.0 - it handles the creative/planning
+        model split automatically.
+
+        Args:
+            role: The agent role ("writer", "editor", "story_planner", etc.)
+
+        Returns:
+            OpenAIChatCompletionClient configured for the role
+
+        Raises:
+            ConfigurationError: If AutoGen 2.0 is not available
+        """
+        if not AUTOGEN_2_AVAILABLE:
+            raise ConfigurationError(
+                "AutoGen 2.0 packages not available. "
+                "Install with: pip install 'autogen-agentchat>=0.4.0' 'autogen-ext[openai]>=0.4.0'"
+            )
+
+        import logging
+        logger = logging.getLogger("config")
+
+        provider_config = self._get_provider_config_for_role(role)
+
+        try:
+            # Build model_info for non-standard models
+            model_info = self._create_model_info_for_model(provider_config["model"])
+            
+            client = OpenAIChatCompletionClient(
+                model=provider_config["model"],
+                base_url=provider_config["base_url"],
+                api_key=provider_config["api_key"],
+                timeout=provider_config.get("timeout", ConfigConstants.DEFAULT_TIMEOUT),
+                model_info=model_info,
+            )
+            logger.info(f"Created model client for role '{role}' with model: {provider_config['model']}")
+            return client
+        except Exception as e:
+            raise ConfigurationError(f"Failed to create model client for role '{role}': {e}")
+    
+    def _create_model_info_for_model(self, model_name: str) -> ModelInfo:
+        """Create ModelInfo for a given model name.
+        
+        For standard OpenAI models, returns None to let AutoGen use built-in info.
+        For custom/local models, returns appropriate model info.
+        """
+        if ModelInfo is None:
+            return None
+            
+        # Standard OpenAI models - use built-in info
+        standard_models = {"gpt-4", "gpt-4-turbo", "gpt-4-turbo-preview", "gpt-3.5-turbo", 
+                          "gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"}
+        if model_name.lower() in standard_models:
+            return None
+        
+        # For custom/local models, specify capabilities
+        # Most modern LLMs support these basic capabilities
+        return ModelInfo(
+            vision=False,
+            function_calling=True,
+            json_output=True,
+            family="unknown",
+            structured_output=False,
+        )
+    
+    def _get_provider_config_for_role(self, role: str) -> Dict[str, str]:
+        """Get provider configuration for a specific role
+        
+        Args:
+            role: Agent role (e.g., "writer", "editor", "story_planner")
+            
+        Returns:
+            Dictionary with model, base_url, and api_key
+        """
+        # Determine which model to use based on role
+        is_creative_role = role in ["writer"]
+        is_planning_role = role in ["story_planner", "world_builder", "memory_keeper", 
+                                    "editor", "outline_creator"]
+        
+        if is_creative_role:
+            # Check for remote creative configuration first
+            if self.openai_creative_api_key:
+                return {
+                    "model": self.openai_creative_model or "gpt-4",
+                    "base_url": self.openai_creative_base_url or "https://api.openai.com/v1",
+                    "api_key": self.openai_creative_api_key
+                }
+            elif self.provider == "local" and self.local_creative_model:
+                return {
+                    "model": self.local_creative_model,
+                    "base_url": self.local_creative_url or self.local_url,
+                    "api_key": self.local_api_key
+                }
+        
+        if is_planning_role:
+            if self.provider == "local" and self.local_planning_model:
+                return {
+                    "model": self.local_planning_model,
+                    "base_url": self.local_planning_url or self.local_url,
+                    "api_key": self.local_api_key
+                }
+            elif self.provider == "openai" and self.openai_api_key:
+                return {
+                    "model": self.openai_model,
+                    "base_url": self.openai_base_url or "https://api.openai.com/v1",
+                    "api_key": self.openai_api_key
+                }
+        
+        # Fallback to default configuration
+        return {
+            "model": self.local_model,
+            "base_url": self.local_url,
+            "api_key": self.local_api_key
+        }
 
 
 # For backwards compatibility - maintains the old interface
@@ -466,3 +687,39 @@ def create_env_template(filepath: str = ".env.example") -> None:
     """Create a template .env file"""
     with open(filepath, "w") as f:
         f.write(ENV_TEMPLATE.strip())
+
+
+# QMD Configuration Template Extension
+QMD_ENV_TEMPLATE = """
+# QMD (Query Markup Documents) Integration
+# QMD provides local search capabilities across generated chapters
+# Install from: https://github.com/tobi/qmd
+
+# Enable QMD integration (requires qmd CLI installed)
+QMD_ENABLED=false
+
+# Collection name for book chapters
+QMD_COLLECTION_NAME=book_chapters
+
+# Collection name for knowledge base (research materials, world-building, etc.)
+QMD_KB_COLLECTION=knowledge_base
+
+# Automatically index chapters after generation
+QMD_AUTO_INDEX=true
+
+# Index intermediate drafts (not just final chapters)
+QMD_INDEX_DRAFTS=false
+
+# Minimum relevance score for search results (0.0-1.0)
+QMD_MIN_SCORE=0.3
+
+# Maximum search results to return
+QMD_MAX_RESULTS=5
+"""
+
+
+def create_full_env_template(filepath: str = ".env.example") -> None:
+    """Create a complete .env file template with all options including QMD"""
+    full_template = ENV_TEMPLATE.strip() + QMD_ENV_TEMPLATE
+    with open(filepath, "w") as f:
+        f.write(full_template)
