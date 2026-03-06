@@ -1,6 +1,7 @@
 """Utility functions for the book generation system"""
 import functools
 import logging
+import os
 import random
 import re
 import time
@@ -244,3 +245,48 @@ def sanitize_filename(filename: str) -> str:
     sanitized = re.sub(r'_+', '_', sanitized)
     # Remove leading/trailing underscores and dots
     return sanitized.strip('_.')
+
+
+def save_outline_to_file(outline: list, filepath: str, initial_prompt: str = "") -> None:
+    """Save the book outline to a file with full chapter details
+
+    Args:
+        outline: List of chapter dictionaries with chapter_number, title, and prompt
+        filepath: Path where to save the outline file
+        initial_prompt: Optional initial story premise to include at the top
+    """
+    from constants import FileConstants
+
+    os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
+
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write("=" * 60 + "\n")
+        f.write("BOOK OUTLINE\n")
+        f.write("=" * 60 + "\n\n")
+
+        if initial_prompt:
+            f.write("INITIAL STORY PREMISE:\n")
+            f.write("-" * 60 + "\n")
+            f.write(initial_prompt.strip())
+            f.write("\n\n" + "=" * 60 + "\n\n")
+
+        f.write(f"Total Chapters: {len(outline)}\n\n")
+
+        for chapter in sorted(outline, key=lambda x: x.get("chapter_number", 0)):
+            ch_num = chapter.get("chapter_number", "?")
+            title = chapter.get("title", "Untitled")
+            prompt = chapter.get("prompt", "")
+
+            f.write("=" * 60 + "\n")
+            f.write(f"CHAPTER {ch_num}: {title}\n")
+            f.write("=" * 60 + "\n\n")
+
+            if prompt:
+                f.write("CHAPTER REQUIREMENTS:\n")
+                f.write("-" * 60 + "\n")
+                f.write(prompt.strip())
+                f.write("\n\n")
+
+        f.write("=" * 60 + "\n")
+        f.write("END OF OUTLINE\n")
+        f.write("=" * 60 + "\n")

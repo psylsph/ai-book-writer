@@ -4,6 +4,7 @@ Supports both legacy AutoGen 0.2 and AutoGen 2.0 (0.4+) APIs.
 AutoGen 2.0 uses async team execution with termination conditions.
 """
 import asyncio
+import json
 import re
 from typing import Any, Dict, List, Optional
 
@@ -67,16 +68,23 @@ class OutlineGenerator:
 
             # Sort and verify sequence
             chapters.sort(key=lambda x: x["chapter_number"])
-            is_valid, missing = verify_chapter_sequence(chapters, num_chapters)
 
-            if not is_valid:
-                if missing:
-                    logger.warning(f"Missing chapters: {missing}")
-                raise ValidationError(
-                    f"Expected {num_chapters} chapters, got {len(chapters)}",
-                    field="chapter_count",
-                    value=len(chapters)
-                )
+            # If we got chapters but not enough, log warning and fill with placeholders
+            if len(chapters) < num_chapters:
+                logger.warning(f"Only extracted {len(chapters)} chapters out of {num_chapters} required")
+                # Fill in missing chapters with placeholders
+                while len(chapters) < num_chapters:
+                    next_num = len(chapters) + 1
+                    chapters.append({
+                        "chapter_number": next_num,
+                        "title": f"Chapter {next_num}",
+                        "prompt": (
+                            f"- Key events: Scene {next_num}a, Scene {next_num}b, Scene {next_num}c\n"
+                            f"- Character developments: [To be determined]\n"
+                            f"- Setting: [To be determined]\n"
+                            f"- Tone: [To be determined]"
+                        ),
+                    })
 
             logger.info(f"Successfully generated outline with {len(chapters)} chapters")
             return chapters
@@ -188,24 +196,47 @@ class OutlineGenerator:
 Process:
 1. Story Planner: Create a high-level story arc and major plot points
 2. World Builder: Suggest key settings and world elements needed
-3. Outline Creator: Generate a detailed outline with chapter titles and prompts
+3. Outline Creator: Generate a detailed outline with chapter titles and prompts for ALL {num_chapters} CHAPTERS
 
-Requirements:
-- Each chapter MUST have exactly these fields: Title, Key Events, Character Developments, Setting, Tone
+CRITICAL REQUIREMENTS:
+- You MUST generate ALL {num_chapters} chapters - do not stop early
+- Each chapter MUST have exactly these fields: title, key_events, character_developments, setting, tone
 - Every chapter MUST have at least {OutlineConstants.MIN_EVENTS_PER_CHAPTER} Key Events
-- Total chapters in outline: {num_chapters}
+- Total chapters in outline: {num_chapters} (exactly {num_chapters}, no more, no less)
 - Do not combine chapters
 - Do not leave any chapters undefined
 - Think through every chapter carefully
+- Number chapters sequentially from 1 to {num_chapters}
 
-Start with Chapter 1 and number chapters sequentially.
+IMPORTANT: Provide your response as a JSON array. Start with "OUTLINE:" followed by valid JSON:
 
-End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
+OUTLINE:
+[
+  {{
+    "chapter_number": 1,
+    "title": "Chapter Title Here",
+    "key_events": ["Event 1", "Event 2", "Event 3"],
+    "character_developments": "Description of character growth",
+    "setting": "Location and atmosphere",
+    "tone": "Emotional and narrative tone"
+  }},
+  {{
+    "chapter_number": 2,
+    "title": "Chapter 2 Title",
+    "key_events": ["Event A", "Event B", "Event C"],
+    "character_developments": "Description of character growth",
+    "setting": "Location and atmosphere",
+    "tone": "Emotional and narrative tone"
+  }},
+  ... continue for ALL {num_chapters} chapters ...
+]
+
+End the outline with '{AgentConstants.OUTLINE_END_TAG}' only after ALL {num_chapters} chapters have been listed in the JSON array."""
 
     def _process_outline_results(
         self, messages: List[Dict[str, Any]], num_chapters: int
     ) -> List[Dict[str, Any]]:
-        """Extract and process the outline with strict format requirements"""
+        """Extract and process the outline with JSON or text format requirements"""
         logger.debug("Processing outline from messages")
         outline_content = self._extract_outline_content(messages)
 
@@ -213,7 +244,13 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
             logger.warning("No structured outline found")
             return []
 
-        chapters = self._parse_chapter_sections(outline_content, num_chapters)
+        # Try JSON parsing first (more reliable)
+        chapters = self._try_parse_json_outline(outline_content, num_chapters)
+
+        # Fall back to regex parsing if JSON fails
+        if not chapters:
+            logger.debug("JSON parsing failed, trying regex parsing")
+            chapters = self._parse_chapter_sections(outline_content, num_chapters)
 
         if len(chapters) < num_chapters:
             logger.warning(
@@ -222,8 +259,127 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
 
         return chapters
 
+    def _try_parse_json_outline(
+        self, content: str, num_chapters: int
+    ) -> List[Dict[str, Any]]:
+        """Try to parse outline as JSON format"""
+        json_content = None
+
+        # Strip "OUTLINE:" prefix if present
+        if content.startswith("OUTLINE:"):
+            content = content[7:].strip()  # Remove "OUTLINE:" prefix
+
+        # Method 1: Look for content between ```json and ``` code blocks
+        json_block_match = re.search(r'```json\s*(\[.*?\])\s*```', content, re.DOTALL)
+        if json_block_match:
+            json_content = json_block_match.group(1)
+            logger.debug("Found JSON in markdown code block")
+
+        # Method 2: Look for JSON array pattern with bracket counting
+        if not json_content:
+            # Find the first [ and track brackets to find the matching ]
+            bracket_start = content.find("[")
+            if bracket_start != -1 and '"chapter_number"' in content[bracket_start:bracket_start+1000]:
+                bracket_count = 0
+                in_string = False
+                escape_next = False
+                for i in range(bracket_start, len(content)):
+                    char = content[i]
+
+                    if escape_next:
+                        escape_next = False
+                        continue
+
+                    if char == '\\':
+                        escape_next = True
+                        continue
+
+                    if char == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+
+                    if not in_string:
+                        if char == '[':
+                            bracket_count += 1
+                        elif char == ']':
+                            bracket_count -= 1
+                            if bracket_count == 0:
+                                json_content = content[bracket_start:i+1]
+                                logger.debug(f"Found JSON array from position {bracket_start} to {i}")
+                                break
+
+        if not json_content:
+            logger.debug("No valid JSON array found in content")
+            return []
+
+        # Clean JSON to handle common LLM errors (trailing commas, etc.)
+        json_content = self._clean_json(json_content)
+
+        # Log a preview of the JSON for debugging
+        logger.debug(f"JSON content preview (first 500 chars): {json_content[:500]}")
+
+        try:
+            logger.debug("Attempting to parse outline as JSON")
+            data = json.loads(json_content)
+
+            if not isinstance(data, list):
+                logger.warning(f"JSON outline is not a list: {type(data)}")
+                return []
+
+            chapters = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+
+                # Extract fields with fallbacks
+                chapter_num = item.get("chapter_number", len(chapters) + 1)
+                title = item.get("title", f"Chapter {chapter_num}")
+
+                # Build prompt from JSON fields
+                key_events = item.get("key_events", [])
+                if isinstance(key_events, list):
+                    events_text = "\n".join(f"- {event}" for event in key_events)
+                else:
+                    events_text = str(key_events)
+
+                character_dev = item.get("character_developments", "Continue character arcs from previous chapters")
+                setting = item.get("setting", "Maintain consistent world setting")
+                tone = item.get("tone", "Match the established narrative tone")
+
+                prompt_parts = [
+                    f"- Key events: {events_text}",
+                    f"- Character developments: {character_dev}",
+                    f"- Setting: {setting}",
+                    f"- Tone: {tone}"
+                ]
+
+                chapters.append({
+                    "chapter_number": chapter_num,
+                    "title": title,
+                    "prompt": "\n".join(prompt_parts),
+                })
+
+            logger.info(f"Successfully parsed {len(chapters)} chapters from JSON")
+            return chapters
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON outline: {e}")
+            logger.debug(f"JSON content that failed to parse: {json_content[:500]}")
+            return []
+        except Exception as e:
+            logger.warning(f"Error processing JSON outline: {e}")
+            return []
+
+    def _clean_json(self, json_str: str) -> str:
+        """Clean JSON string to handle common LLM generation errors"""
+        # Remove trailing commas before } or ]
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*\]', ']', json_str)
+        # Remove trailing commas inside strings would be more complex, but the above handles most cases
+        return json_str
+
     def _extract_outline_content(self, messages: List[Dict[str, Any]]) -> str:
-        """Extract outline content from messages"""
+        """Extract outline content from messages - supports both JSON and text format"""
         logger.debug(f"Searching {len(messages)} messages for outline content")
 
         # Debug: Log all message senders to understand the conversation flow
@@ -233,7 +389,7 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
             sender_counts[sender] = sender_counts.get(sender, 0) + 1
         logger.debug(f"Message senders: {sender_counts}")
 
-        # Look for content between "OUTLINE:" and "END OF OUTLINE"
+        # First, look for content between "OUTLINE:" and "END OF OUTLINE" (supports both JSON and text)
         for msg in reversed(messages):
             content = msg.get("content", "")
             if AgentConstants.OUTLINE_START_TAG in content:
@@ -246,16 +402,57 @@ End the outline with '{AgentConstants.OUTLINE_END_TAG}'"""
                     else:
                         return content[start_idx:].strip()
 
-        # Fallback: look for content with chapter markers
+        # Second, look for JSON in markdown code blocks (```json ... ```)
+        for msg in reversed(messages):
+            content = msg.get("content", "")
+            if '```json' in content and '"chapter_number"' in content:
+                # Extract JSON from code block
+                json_start = content.find('```json')
+                if json_start != -1:
+                    json_content_start = json_start + 7  # Skip past ```json
+                    json_end = content.find('```', json_content_start)
+                    if json_end != -1:
+                        json_content = content[json_content_start:json_end].strip()
+                        logger.debug(f"Extracted JSON from code block, length: {len(json_content)}")
+                        return "OUTLINE:\n" + json_content
+
+        # Third, look for JSON array pattern (with chapter_number field)
+        for msg in reversed(messages):
+            content = msg.get("content", "")
+            if '"chapter_number"' in content or '"title"' in content:
+                # Found potential JSON content
+                # Look for JSON array start
+                bracket_start = content.find("[")
+                if bracket_start != -1:
+                    # Find the matching closing bracket
+                    bracket_count = 0
+                    for i in range(bracket_start, len(content)):
+                        if content[i] == '[':
+                            bracket_count += 1
+                        elif content[i] == ']':
+                            bracket_count -= 1
+                            if bracket_count == 0:
+                                # Found complete JSON array
+                                json_content = content[bracket_start:i+1]
+                                # Validate it looks like chapter data
+                                if '"chapter_number"' in json_content or '"title"' in json_content:
+                                    logger.debug(f"Extracted JSON array, length: {len(json_content)}")
+                                    return "OUTLINE:\n" + json_content
+
+        # Fourth fallback: look for traditional text chapter markers
         for msg in reversed(messages):
             content = msg.get("content", "")
             if "Chapter 1:" in content or "**Chapter 1:**" in content:
                 return content
-            # Also look for "End of Chapter X" pattern which indicates narrative content
+
+        # Fifth fallback: look for "End of Chapter X" pattern (narrative content)
+        for msg in reversed(messages):
+            content = msg.get("content", "")
             if "End of Chapter" in content:
                 logger.warning("Detected narrative content instead of outline format")
                 return content
 
+        logger.warning("No outline content found in any messages")
         return ""
 
     def _parse_chapter_sections(

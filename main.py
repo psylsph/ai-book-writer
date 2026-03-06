@@ -1,5 +1,6 @@
 """Main script for running the book generation system"""
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -8,7 +9,7 @@ from agents import BookAgents
 from book_generator import BookGenerator
 from config import get_app_config, AppConfig, AUTOGEN_2_AVAILABLE
 from outline_generator import OutlineGenerator
-from utils import get_logger, setup_logging
+from utils import get_logger, setup_logging, save_outline_to_file
 
 # Determine whether to use AutoGen 2.0 by default
 USE_AUTOGEN2_DEFAULT = AUTOGEN_2_AVAILABLE
@@ -146,11 +147,17 @@ def run_book_generation(
             logger.error("Failed to generate outline")
             sys.exit(1)
 
+        # Save outline to file for inspection
+        outline_path = os.path.join(config.output_dir, "outline.txt")
+        save_outline_to_file(outline, outline_path, initial_prompt)
+        logger.info(f"✓ Outline saved to: {outline_path}")
+
+        # Log outline at INFO level for visibility
         logger.info(f"\nGenerated Outline ({len(outline)} chapters):")
         for chapter in outline:
             logger.info(f"\nChapter {chapter['chapter_number']}: {chapter['title']}")
             logger.info("-" * 50)
-            logger.debug(chapter['prompt'])
+            logger.info(f"Prompt:\n{chapter['prompt']}")  # Changed from debug to info
 
         # Phase 2: Generate Book
         logger.info("\n" + "=" * 50)
@@ -177,6 +184,7 @@ def run_book_generation(
             outline,
             output_dir=config.output_dir,
             use_autogen2=use_autogen2,
+            emergency_generation_enabled=config.emergency_generation_enabled,
         )
 
         book_gen.generate_book(outline)

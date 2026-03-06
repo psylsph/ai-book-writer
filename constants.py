@@ -10,6 +10,11 @@ class ConfigConstants:
     DEFAULT_SEED = 42
     DEFAULT_TEMPERATURE = 0.7
     DEFAULT_TIMEOUT = 1800  # 30 minutes - local LLMs can be slow for long content
+    # Max tokens for different model types
+    INTERNAL_MAX_TOKENS = 32000  # Max tokens for local/internal models
+    EXTERNAL_MAX_TOKENS = 128000  # Max tokens for external/remote models (OpenAI, etc.)
+    # Emergency generation (fallback when normal generation fails)
+    EMERGENCY_GENERATION_ENABLED = False  # Default to off - focus on fixing the root cause
 
 
 class FileConstants:

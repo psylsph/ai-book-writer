@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.conditions import MaxMessageTermination
 from autogen_agentchat.agents import AssistantAgent
+from autogen_ext.models.openai import OpenAIChatCompletionClient
 AUTOGEN_2_AVAILABLE = True
 
 from constants import (
@@ -59,6 +60,7 @@ class BookGenerator:
         output_dir: Optional[str] = None,
         qmd_config: Optional[QMDConfig] = None,
         use_autogen2: bool = True,
+        emergency_generation_enabled: bool = False,
     ):
         """Initialize with outline to maintain chapter count context
 
@@ -69,6 +71,7 @@ class BookGenerator:
             output_dir: Directory for output files
             qmd_config: QMD configuration for search integration (optional)
             use_autogen2: Use AutoGen 2.0 API if True, legacy API if False
+            emergency_generation_enabled: If True, attempt simplified retry on failure (default: False)
         """
         self.agents = agents
         self.agent_config = agent_config
@@ -77,6 +80,7 @@ class BookGenerator:
         self.max_iterations = 3
         self.outline = outline
         self.use_autogen2 = use_autogen2 and AUTOGEN_2_AVAILABLE
+        self.emergency_generation_enabled = emergency_generation_enabled
 
         # Initialize QMD manager for search capabilities
         self.qmd_manager: Optional[QMDManager] = None
@@ -298,12 +302,18 @@ class BookGenerator:
             logger.error(f"All retry attempts exhausted for chapter {chapter_number}")
             raise
         except (FileOperationError, ChapterError) as e:
-            # These errors mean we should try emergency generation
+            # These errors mean we should try emergency generation (if enabled)
             logger.error(f"Critical error in chapter {chapter_number}: {e}")
             self._save_checkpoint(chapter_number, "critical_error", {"error": str(e), "messages": messages})
-            logger.info(f"Attempting emergency generation for chapter {chapter_number}...")
-            self._handle_chapter_generation_failure(chapter_number, prompt)
-            logger.info(f"Emergency generation completed for chapter {chapter_number}")
+            if self.emergency_generation_enabled:
+                logger.info(f"Attempting emergency generation for chapter {chapter_number}...")
+                self._handle_chapter_generation_failure(chapter_number, prompt)
+                logger.info(f"Emergency generation completed for chapter {chapter_number}")
+            else:
+                logger.error(
+                    f"Emergency generation is disabled. To enable it, set BOOK_EMERGENCY_GENERATION=true in .env"
+                )
+                raise
         except Exception as e:
             # Log unexpected errors but don't necessarily trigger emergency mode
             logger.error(f"Unexpected error in chapter {chapter_number}: {e}")
@@ -315,8 +325,18 @@ class BookGenerator:
                 self.output_dir, format_chapter_filename(chapter_number)
             )
             if not os.path.exists(chapter_file):
-                logger.warning("No chapter file exists, attempting emergency generation...")
-                self._handle_chapter_generation_failure(chapter_number, prompt)
+                if self.emergency_generation_enabled:
+                    logger.warning("No chapter file exists, attempting emergency generation...")
+                    self._handle_chapter_generation_failure(chapter_number, prompt)
+                else:
+                    logger.error(
+                        "No chapter file exists and emergency generation is disabled. "
+                        "To enable it, set BOOK_EMERGENCY_GENERATION=true in .env"
+                    )
+                    raise ChapterError(
+                        f"Chapter {chapter_number} file not created and emergency generation disabled",
+                        chapter_number=chapter_number
+                    )
             else:
                 logger.info("Chapter file exists despite error, continuing...")
 
@@ -415,6 +435,30 @@ class BookGenerator:
 
         return None
 
+    def _get_model_client(self) -> Optional[OpenAIChatCompletionClient]:
+        """Extract model client from config"""
+        # If agent_config is already a model client, return it
+        if OpenAIChatCompletionClient is not None and isinstance(self.agent_config, OpenAIChatCompletionClient):
+            return self.agent_config
+
+        # If agent_config is a dict with model_client key
+        if isinstance(self.agent_config, dict):
+            client = self.agent_config.get("model_client")
+            if OpenAIChatCompletionClient is not None and isinstance(client, OpenAIChatCompletionClient):
+                return client
+
+            # Try to create from config_list if available
+            config_list = self.agent_config.get("config_list", [])
+            if config_list and OpenAIChatCompletionClient is not None:
+                config = config_list[0]
+                return OpenAIChatCompletionClient(
+                    model=config.get("model", "gpt-4"),
+                    base_url=config.get("base_url"),
+                    api_key=config.get("api_key", ""),
+                )
+
+        return None
+
     def _create_team_autogen2(self) -> Any:
         """Create a new team for the agents (AutoGen 2.0)"""
         if RoundRobinGroupChat is None or MaxMessageTermination is None or AssistantAgent is None:
@@ -430,14 +474,31 @@ class BookGenerator:
         if writer is None:
             raise ValueError("Writer agent not found")
 
-        model_client = getattr(writer, "model_client", None)
+        # Get model_client from agent_config (not from writer agent)
+        model_client = self._get_model_client()
         if model_client is None:
-            raise ValueError("Writer agent must have a model_client for AutoGen 2.0")
+            raise ValueError("agent_config must contain a model_client for AutoGen 2.0")
+
+        # Create writer_final agent with a simple system message
+        # Note: We can't access writer.system_message directly as AssistantAgent doesn't expose it
+        writer_final_system_message = """You are the final writer responsible for producing polished chapter content.
+
+Your role is to:
+1. Take feedback from the editor into account
+2. Produce the final, polished version of the chapter
+3. Ensure all requirements are met
+4. Mark your final version with 'SCENE FINAL:' tag
+
+Book Context:
+""" + "\n".join([
+            f"Chapter {ch['chapter_number']}: {ch['title']}"
+            for ch in sorted(self.outline, key=lambda x: x["chapter_number"])
+        ])
 
         writer_final = AssistantAgent(
             name="writer_final",
             model_client=model_client,
-            system_message=writer.system_message,
+            system_message=writer_final_system_message,
         )
 
         # Build participants list, ensuring no None values
@@ -484,6 +545,9 @@ class BookGenerator:
         """Prepare context for chapter generation"""
         context = self._prepare_chapter_context(chapter_number, prompt)
         is_last = chapter_number >= len(self.outline)
+
+        # Log the chapter requirements at INFO level for visibility
+        logger.info(f"Chapter {chapter_number} Requirements:\n{prompt}")
 
         return f"""IMPORTANT: Wait for confirmation before proceeding.
 IMPORTANT: This is Chapter {chapter_number}. Do not proceed to next chapter until explicitly instructed.

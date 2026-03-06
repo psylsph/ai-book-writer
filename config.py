@@ -54,6 +54,8 @@ class LLMProviderConfig:
     max_tokens: Optional[int] = None
     # Price per 1K tokens: [prompt_price, completion_price]
     price: Optional[List[float]] = None  # e.g., [0.03, 0.06] for GPT-4
+    # Determine if this is an external (remote) or internal (local) provider
+    is_external: bool = False
     
     def get_price_config(self) -> Optional[List[float]]:
         """Get price configuration for cost tracking"""
@@ -174,7 +176,18 @@ class AppConfig:
     # Example for GPT-3.5: [0.0015, 0.002]
     price_prompt_per_1k: Optional[float] = None
     price_completion_per_1k: Optional[float] = None
-    
+
+    # Max tokens settings for different model types
+    # Internal models (local LLMs) - typically smaller context windows
+    internal_max_tokens: int = ConfigConstants.INTERNAL_MAX_TOKENS
+    # External models (OpenAI, etc.) - typically larger context windows
+    external_max_tokens: int = ConfigConstants.EXTERNAL_MAX_TOKENS
+
+    # Emergency generation settings
+    # When enabled, attempts simplified retry if normal generation fails
+    # When disabled (default), fails fast to allow debugging the root cause
+    emergency_generation_enabled: bool = ConfigConstants.EMERGENCY_GENERATION_ENABLED
+
     def __post_init__(self):
         """Load configuration from environment variables"""
         # OpenAI settings
@@ -247,6 +260,16 @@ class AppConfig:
             self.price_prompt_per_1k = float(os.getenv("LLM_PRICE_PROMPT_PER_1K"))
         if os.getenv("LLM_PRICE_COMPLETION_PER_1K"):
             self.price_completion_per_1k = float(os.getenv("LLM_PRICE_COMPLETION_PER_1K"))
+
+        # Max tokens configuration
+        if os.getenv("LLM_INTERNAL_MAX_TOKENS"):
+            self.internal_max_tokens = int(os.getenv("LLM_INTERNAL_MAX_TOKENS"))
+        if os.getenv("LLM_EXTERNAL_MAX_TOKENS"):
+            self.external_max_tokens = int(os.getenv("LLM_EXTERNAL_MAX_TOKENS"))
+
+        # Emergency generation configuration
+        emergency_gen_env = os.getenv("BOOK_EMERGENCY_GENERATION", "false").lower()
+        self.emergency_generation_enabled = emergency_gen_env in ("true", "1", "yes", "on")
     
     def get_agent_config(self) -> AgentConfig:
         """Get AutoGen-compatible agent configuration"""
@@ -461,14 +484,19 @@ class AppConfig:
 
         # Create and return the model client
         try:
+            # Build model_info for non-standard models
+            model_info = self._create_model_info_for_model(provider_config["model"])
+
             client = OpenAIChatCompletionClient(
                 model=provider_config["model"],
                 base_url=provider_config["base_url"],
                 api_key=provider_config["api_key"],
                 # Add timeout configuration
                 timeout=provider_config.get("timeout", ConfigConstants.DEFAULT_TIMEOUT),
+                max_tokens=provider_config.get("max_tokens"),
+                model_info=model_info,
             )
-            logger.info(f"Created model client for role '{role}' with model: {provider_config['model']}")
+            logger.info(f"Created model client for role '{role}' with model: {provider_config['model']}, max_tokens: {provider_config.get('max_tokens')}")
             return client
         except Exception as e:
             raise ConfigurationError(f"Failed to create model client for role '{role}': {e}")
@@ -502,15 +530,16 @@ class AppConfig:
         try:
             # Build model_info for non-standard models
             model_info = self._create_model_info_for_model(provider_config["model"])
-            
+
             client = OpenAIChatCompletionClient(
                 model=provider_config["model"],
                 base_url=provider_config["base_url"],
                 api_key=provider_config["api_key"],
                 timeout=provider_config.get("timeout", ConfigConstants.DEFAULT_TIMEOUT),
+                max_tokens=provider_config.get("max_tokens"),
                 model_info=model_info,
             )
-            logger.info(f"Created model client for role '{role}' with model: {provider_config['model']}")
+            logger.info(f"Created model client for role '{role}' with model: {provider_config['model']}, max_tokens: {provider_config.get('max_tokens')}")
             return client
         except Exception as e:
             raise ConfigurationError(f"Failed to create model client for role '{role}': {e}")
@@ -542,52 +571,62 @@ class AppConfig:
     
     def _get_provider_config_for_role(self, role: str) -> Dict[str, str]:
         """Get provider configuration for a specific role
-        
+
         Args:
             role: Agent role (e.g., "writer", "editor", "story_planner")
-            
+
         Returns:
-            Dictionary with model, base_url, and api_key
+            Dictionary with model, base_url, api_key, and max_tokens
         """
         # Determine which model to use based on role
         is_creative_role = role in ["writer"]
-        is_planning_role = role in ["story_planner", "world_builder", "memory_keeper", 
+        is_planning_role = role in ["story_planner", "world_builder", "memory_keeper",
                                     "editor", "outline_creator"]
-        
+
         if is_creative_role:
             # Check for remote creative configuration first
             if self.openai_creative_api_key:
                 return {
                     "model": self.openai_creative_model or "gpt-4",
                     "base_url": self.openai_creative_base_url or "https://api.openai.com/v1",
-                    "api_key": self.openai_creative_api_key
+                    "api_key": self.openai_creative_api_key,
+                    "max_tokens": self.external_max_tokens,
+                    "is_external": True,
                 }
             elif self.provider == "local" and self.local_creative_model:
                 return {
                     "model": self.local_creative_model,
                     "base_url": self.local_creative_url or self.local_url,
-                    "api_key": self.local_api_key
+                    "api_key": self.local_api_key,
+                    "max_tokens": self.internal_max_tokens,
+                    "is_external": False,
                 }
-        
+
         if is_planning_role:
             if self.provider == "local" and self.local_planning_model:
                 return {
                     "model": self.local_planning_model,
                     "base_url": self.local_planning_url or self.local_url,
-                    "api_key": self.local_api_key
+                    "api_key": self.local_api_key,
+                    "max_tokens": self.internal_max_tokens,
+                    "is_external": False,
                 }
             elif self.provider == "openai" and self.openai_api_key:
                 return {
                     "model": self.openai_model,
                     "base_url": self.openai_base_url or "https://api.openai.com/v1",
-                    "api_key": self.openai_api_key
+                    "api_key": self.openai_api_key,
+                    "max_tokens": self.external_max_tokens,
+                    "is_external": True,
                 }
-        
+
         # Fallback to default configuration
         return {
             "model": self.local_model,
             "base_url": self.local_url,
-            "api_key": self.local_api_key
+            "api_key": self.local_api_key,
+            "max_tokens": self.internal_max_tokens,
+            "is_external": False,
         }
 
 
@@ -664,6 +703,12 @@ BOOK_NUM_CHAPTERS=25
 BOOK_MIN_WORDS=3000
 BOOK_OUTPUT_DIR=book_output
 
+# Emergency Generation (fallback when normal generation fails)
+# When disabled (default), the system will fail fast to allow debugging root causes
+# When enabled, attempts a simplified retry if normal generation fails
+# Recommended: Keep disabled (false) to focus on fixing the actual problem
+BOOK_EMERGENCY_GENERATION=false
+
 # Logging
 BOOK_LOG_LEVEL=INFO
 
@@ -680,6 +725,13 @@ LLM_CACHE_SEED=42
 # Example for GPT-3.5: LLM_PRICE_PROMPT_PER_1K=0.0015, LLM_PRICE_COMPLETION_PER_1K=0.002
 # LLM_PRICE_PROMPT_PER_1K=0.0
 # LLM_PRICE_COMPLETION_PER_1K=0.0
+
+# LLM Max Tokens (optional)
+# Maximum tokens for model responses
+# For local/internal models (e.g., LM Studio, Ollama)
+# LLM_INTERNAL_MAX_TOKENS=32000
+# For external/remote models (e.g., OpenAI, Claude)
+# LLM_EXTERNAL_MAX_TOKENS=128000
 """
 
 

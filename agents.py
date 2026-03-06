@@ -213,6 +213,8 @@ Always provide specific, detailed content - never use placeholders.""",
             model_client=model_client,
             system_message=f"""Generate a detailed {num_chapters}-chapter outline.
 
+CRITICAL: You MUST generate ALL {num_chapters} chapters. Do not stop early. Do not summarize.
+
 YOU MUST USE EXACTLY THIS FORMAT FOR EACH CHAPTER - NO DEVIATIONS:
 
 Chapter 1: [Title]
@@ -225,18 +227,31 @@ Character Developments: [Specific character moments and changes]
 Setting: [Specific location and atmosphere]
 Tone: [Specific emotional and narrative tone]
 
-[REPEAT THIS EXACT FORMAT FOR ALL {num_chapters} CHAPTERS]
+Chapter 2: [Title]
+Chapter Title: [Same title as above]
+Key Events:
+- [Event 1]
+- [Event 2]
+- [Event 3]
+Character Developments: [Specific character moments and changes]
+Setting: [Specific location and atmosphere]
+Tone: [Specific emotional and narrative tone]
+
+[Continue this pattern for ALL {num_chapters} chapters - Chapter 3, Chapter 4, etc.]
 
 Requirements:
 1. EVERY field must be present for EVERY chapter
 2. EVERY chapter must have AT LEAST 3 specific Key Events
-3. ALL chapters must be detailed - no placeholders
+3. ALL {num_chapters} chapters must be generated - no shortcuts
 4. Format must match EXACTLY - including all headings and bullet points
+5. Number your chapters sequentially from 1 to {num_chapters}
 
 Initial Premise:
 {initial_prompt}
 
 START WITH '{AgentConstants.OUTLINE_START_TAG}' AND END WITH '{AgentConstants.OUTLINE_END_TAG}'
+
+Remember: Generate ALL {num_chapters} chapters before ending with '{AgentConstants.OUTLINE_END_TAG}'
 """,
         )
 
